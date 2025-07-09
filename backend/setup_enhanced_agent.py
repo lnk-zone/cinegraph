@@ -99,7 +99,7 @@ async def test_database_connection():
         config = GraphitiConfig(
             database_url=os.getenv("GRAPHITI_DATABASE_URL", "bolt://localhost:7687"),
             username=os.getenv("GRAPHITI_DATABASE_USER", "neo4j"),
-            password=os.getenv("GRAPHITI_DATABASE_PASSWORD", "password"),
+            password=os.getenv("GRAPHITI_DATABASE_PASSWORD"),
             database_name=os.getenv("GRAPHITI_DATABASE_NAME", "neo4j")
         )
         
@@ -139,7 +139,7 @@ async def test_enhanced_agent():
         config = GraphitiConfig(
             database_url=os.getenv("GRAPHITI_DATABASE_URL", "bolt://localhost:7687"),
             username=os.getenv("GRAPHITI_DATABASE_USER", "neo4j"),
-            password=os.getenv("GRAPHITI_DATABASE_PASSWORD", "password"),
+            password=os.getenv("GRAPHITI_DATABASE_PASSWORD"),
             database_name=os.getenv("GRAPHITI_DATABASE_NAME", "neo4j")
         )
         
