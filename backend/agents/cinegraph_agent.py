@@ -52,166 +52,314 @@ class CineGraphAgent:
         self._setup_redis_alerts()
     
     def _load_schema_context(self) -> Dict[str, Any]:
-        """Load and parse the CineGraph schema for enhanced query generation."""
+        """Load and parse the complete CineGraph schema for enhanced query generation."""
+        
+        # Define enum values for schema validation
+        enums = {
+            "knowledge_type": ["factual", "relationship", "emotional", "social", "secret"],
+            "importance_level": ["critical", "important", "minor"],
+            "verification_status": ["confirmed", "suspected", "false", "unknown"],
+            "location_type": ["city", "building", "room", "outdoor"],
+            "accessibility": ["public", "private", "restricted", "secret"],
+            "participation_level": ["active", "passive", "mentioned", "background"],
+            "relationship_type": ["family", "friend", "enemy", "ally", "romantic", "professional", "stranger"],
+            "emotional_valence": ["love", "like", "neutral", "dislike", "hate"],
+            "relationship_status": ["current", "past", "complicated", "unknown"],
+            "power_dynamic": ["equal", "dominant", "submissive", "complex"],
+            "confidence_level": ["certain", "probable", "suspected", "rumored"],
+            "sharing_restrictions": ["can_share", "must_keep_secret", "conditional_sharing"],
+            "emotional_impact": ["positive", "negative", "neutral", "shocking"],
+            "contradiction_type": ["factual", "temporal", "logical", "character_behavior"],
+            "severity": ["critical", "major", "minor", "potential"],
+            "resolution_status": ["unresolved", "resolved", "false_positive", "ignored"],
+            "implication_strength": ["certain", "probable", "possible", "weak"],
+            "location_accessibility": ["public", "private", "restricted", "secret"]
+        }
+        
         schema = {
+            "enums": enums,
             "entities": [
                 {
                     "name": "Character",
+                    "description": "Represents individual characters in the story",
                     "properties": {
-                        "character_id": {"type": "string", "unique": True},
-                        "name": {"type": "string", "unique": True},
-                        "description": "string",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "created_at": "temporal",
-                        "updated_at": "temporal",
-                        "deleted_at": "temporal"
+                        "character_id": {"type": "string", "unique": True, "required": True},
+                        "name": {"type": "string", "required": True},
+                        "aliases": {"type": "array", "items": "string"},
+                        "description": {"type": "string"},
+                        "role": {"type": "string"},
+                        "first_appearance": {"type": "timestamp"},
+                        "last_mentioned": {"type": "timestamp"},
+                        "is_active": {"type": "boolean", "default": True},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "valid_from": {"type": "timestamp", "temporal": True},
+                        "valid_to": {"type": "timestamp", "temporal": True},
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True},
+                        "deleted_at": {"type": "timestamp", "temporal": True}
                     }
                 },
                 {
                     "name": "Knowledge",
+                    "description": "Represents discrete pieces of information that characters can possess",
                     "properties": {
-                        "knowledge_id": {"type": "string", "unique": True},
-                        "content": "string",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "valid_from": "temporal",
-                        "valid_to": "temporal",
-                        "created_at": "temporal",
-                        "updated_at": "temporal"
+                        "knowledge_id": {"type": "string", "unique": True, "required": True},
+                        "content": {"type": "string", "required": True},
+                        "knowledge_type": {"type": "enum", "values": enums["knowledge_type"]},
+                        "importance_level": {"type": "enum", "values": enums["importance_level"]},
+                        "source_scene": {"type": "string"},
+                        "is_secret": {"type": "boolean", "default": False},
+                        "verification_status": {"type": "enum", "values": enums["verification_status"]},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "valid_from": {"type": "timestamp", "temporal": True},
+                        "valid_to": {"type": "timestamp", "temporal": True},
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True}
                     }
                 },
                 {
                     "name": "Scene",
+                    "description": "Represents narrative scenes or story segments",
                     "properties": {
-                        "scene_id": {"type": "string", "unique": True},
-                        "name": "string",
-                        "content": "string",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "scene_order": {"type": "integer", "sequential": True},
-                        "created_at": "temporal",
-                        "updated_at": "temporal"
+                        "scene_id": {"type": "string", "unique": True, "required": True},
+                        "title": {"type": "string"},
+                        "content": {"type": "text"},
+                        "scene_order": {"type": "integer", "sequential": True, "required": True},
+                        "timestamp_in_story": {"type": "timestamp"},
+                        "location": {"type": "string"},
+                        "characters_present": {"type": "array", "items": "string"},
+                        "word_count": {"type": "integer"},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "valid_from": {"type": "timestamp", "temporal": True},
+                        "valid_to": {"type": "timestamp", "temporal": True},
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True}
                     }
                 },
                 {
                     "name": "Location",
+                    "description": "Represents places where story events occur",
                     "properties": {
-                        "location_id": {"type": "string", "unique": True},
-                        "name": {"type": "string", "unique": True},
-                        "details": "string",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "created_at": "temporal",
-                        "updated_at": "temporal"
+                        "location_id": {"type": "string", "unique": True, "required": True},
+                        "name": {"type": "string", "required": True},
+                        "description": {"type": "string"},
+                        "location_type": {"type": "enum", "values": enums["location_type"]},
+                        "accessibility": {"type": "enum", "values": enums["accessibility"]},
+                        "first_mentioned": {"type": "timestamp"},
+                        "is_active": {"type": "boolean", "default": True},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "valid_from": {"type": "timestamp", "temporal": True},
+                        "valid_to": {"type": "timestamp", "temporal": True},
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True}
                     }
                 }
             ],
             "relationships": [
                 {
                     "type": "KNOWS",
+                    "description": "Connects characters to knowledge they possess",
                     "from": "Character",
                     "to": "Knowledge",
                     "properties": {
-                        "intensity": "integer",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "created_at": "temporal",
-                        "updated_at": "temporal"
+                        "learned_at": {"type": "timestamp", "required": True},
+                        "learned_from": {"type": "string"},
+                        "confidence_level": {"type": "enum", "values": enums["confidence_level"]},
+                        "knowledge_context": {"type": "string"},
+                        "is_current": {"type": "boolean", "default": True},
+                        "sharing_restrictions": {"type": "enum", "values": enums["sharing_restrictions"]},
+                        "emotional_impact": {"type": "enum", "values": enums["emotional_impact"]},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "valid_from": {"type": "timestamp", "temporal": True},
+                        "valid_to": {"type": "timestamp", "temporal": True},
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True}
                     }
                 },
                 {
                     "type": "RELATIONSHIP",
+                    "description": "Connects characters to other characters with relationship context",
                     "from": "Character",
                     "to": "Character",
                     "properties": {
-                        "relationship_type": "string",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "created_at": "temporal",
-                        "updated_at": "temporal"
+                        "relationship_type": {"type": "enum", "values": enums["relationship_type"], "required": True},
+                        "relationship_strength": {"type": "integer", "min": 1, "max": 10},
+                        "trust_level": {"type": "integer", "min": 1, "max": 10},
+                        "emotional_valence": {"type": "enum", "values": enums["emotional_valence"]},
+                        "relationship_status": {"type": "enum", "values": enums["relationship_status"]},
+                        "established_at": {"type": "timestamp"},
+                        "last_interaction": {"type": "timestamp"},
+                        "is_mutual": {"type": "boolean", "default": True},
+                        "relationship_context": {"type": "string"},
+                        "power_dynamic": {"type": "enum", "values": enums["power_dynamic"]},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "valid_from": {"type": "timestamp", "temporal": True},
+                        "valid_to": {"type": "timestamp", "temporal": True},
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True}
                     }
                 },
                 {
                     "type": "PRESENT_IN",
+                    "description": "Connects characters to scenes where they appear",
                     "from": "Character",
                     "to": "Scene",
                     "properties": {
-                        "appearance_order": "integer",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "created_at": "temporal",
-                        "updated_at": "temporal"
+                        "arrival_time": {"type": "timestamp"},
+                        "departure_time": {"type": "timestamp"},
+                        "participation_level": {"type": "enum", "values": enums["participation_level"]},
+                        "character_state": {"type": "string"},
+                        "dialogue_count": {"type": "integer", "min": 0},
+                        "actions_performed": {"type": "array", "items": "string"},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True}
                     }
                 },
                 {
                     "type": "OCCURS_IN",
+                    "description": "Connects scenes to locations where they take place",
                     "from": "Scene",
                     "to": "Location",
                     "properties": {
-                        "event_time": "temporal",
-                        "story_id": "string",
-                        "user_id": "string"
+                        "scene_duration": {"type": "string"},
+                        "time_of_day": {"type": "string"},
+                        "weather_conditions": {"type": "string"},
+                        "location_accessibility": {"type": "enum", "values": enums["location_accessibility"]},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "created_at": {"type": "timestamp", "temporal": True}
                     }
                 },
                 {
                     "type": "CONTRADICTS",
+                    "description": "Connects knowledge items that are inconsistent with each other",
                     "from": "Knowledge",
                     "to": "Knowledge",
                     "properties": {
-                        "severity": "string",
-                        "reason": "string",
-                        "confidence": "float",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "created_at": "temporal",
-                        "updated_at": "temporal"
+                        "contradiction_type": {"type": "enum", "values": enums["contradiction_type"]},
+                        "severity": {"type": "enum", "values": enums["severity"]},
+                        "detected_at": {"type": "timestamp"},
+                        "resolution_status": {"type": "enum", "values": enums["resolution_status"]},
+                        "resolution_notes": {"type": "string"},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True}
                     }
                 },
                 {
                     "type": "IMPLIES",
+                    "description": "Connects knowledge items where one logically implies another",
                     "from": "Knowledge",
                     "to": "Knowledge",
                     "properties": {
-                        "certainty": "integer",
-                        "story_id": "string",
-                        "user_id": "string",
-                        "created_at": "temporal",
-                        "updated_at": "temporal"
+                        "implication_strength": {"type": "enum", "values": enums["implication_strength"]},
+                        "logical_basis": {"type": "string"},
+                        "story_id": {"type": "string", "required": True},
+                        "user_id": {"type": "string", "required": True},
+                        # Temporal properties
+                        "created_at": {"type": "timestamp", "temporal": True},
+                        "updated_at": {"type": "timestamp", "temporal": True}
                     }
                 }
-            ]
+            ],
+            "validation_rules": {
+                "entity_validation": [
+                    "Every Character must have a unique name within a project",
+                    "Knowledge content cannot be empty or null",
+                    "Scene order must be sequential and unique",
+                    "Location names must be unique within a project"
+                ],
+                "relationship_validation": [
+                    "KNOWS relationships require valid character_id and knowledge_id",
+                    "RELATIONSHIP relationships cannot connect a character to themselves",
+                    "PRESENT_IN relationships require valid character_id and scene_id",
+                    "Temporal properties must be logically consistent (valid_from <= valid_to)"
+                ],
+                "consistency_rules": [
+                    "Characters cannot know information before it exists in the story timeline",
+                    "Characters cannot be present in scenes that occur before their first appearance",
+                    "Contradictory knowledge items must be flagged for resolution",
+                    "Relationship changes must be temporally consistent"
+                ]
+            }
         }
         return schema
     
     def _build_query_templates(self) -> Dict[str, str]:
-        """Build reusable Cypher query templates for common operations."""
+        """Build reusable Cypher query templates for enhanced schema operations."""
         return {
+            # Enhanced Character Knowledge Queries
             "character_knowledge_at_time": """
-                MATCH (c:Character {name: $character_name, story_id: $story_id})-[:KNOWS]->(k:Knowledge)
+                MATCH (c:Character {name: $character_name, story_id: $story_id})-[knows:KNOWS]->(k:Knowledge)
                 WHERE ($user_id IS NULL OR c.user_id = $user_id)
                 AND k.valid_from <= $timestamp
                 AND (k.valid_to IS NULL OR k.valid_to >= $timestamp)
-                RETURN k
+                RETURN k, knows.learned_at, knows.confidence_level, knows.emotional_impact
                 ORDER BY k.valid_from DESC
             """,
+            
+            # Enhanced Scene Analysis
             "characters_in_scene": """
-                MATCH (c:Character)-[:PRESENT_IN]->(s:Scene {scene_id: $scene_id, story_id: $story_id})
+                MATCH (c:Character)-[present:PRESENT_IN]->(s:Scene {scene_id: $scene_id, story_id: $story_id})
                 WHERE ($user_id IS NULL OR c.user_id = $user_id)
-                RETURN c
+                RETURN c, present.participation_level, present.dialogue_count, present.character_state
                 ORDER BY c.name
             """,
-            "scene_location": """
-                MATCH (s:Scene {scene_id: $scene_id, story_id: $story_id})-[:OCCURS_IN]->(l:Location)
+            
+            "scene_location_details": """
+                MATCH (s:Scene {scene_id: $scene_id, story_id: $story_id})-[occurs:OCCURS_IN]->(l:Location)
                 WHERE ($user_id IS NULL OR s.user_id = $user_id)
-                RETURN l
+                RETURN l, occurs.time_of_day, occurs.weather_conditions, occurs.scene_duration
             """,
-            "character_relationships": """
+            
+            # Enhanced Relationship Analysis
+            "character_relationships_detailed": """
                 MATCH (c1:Character {name: $character_name, story_id: $story_id})-[r:RELATIONSHIP]->(c2:Character)
                 WHERE ($user_id IS NULL OR c1.user_id = $user_id)
-                RETURN c2, r.relationship_type as relationship_type
-                ORDER BY r.created_at DESC
+                RETURN c2, r.relationship_type, r.relationship_strength, r.trust_level, 
+                       r.emotional_valence, r.relationship_status, r.power_dynamic
+                ORDER BY r.relationship_strength DESC, r.created_at DESC
             """,
+            
+            # Knowledge Analysis with Enhanced Properties
+            "knowledge_by_type": """
+                MATCH (k:Knowledge {story_id: $story_id})
+                WHERE ($user_id IS NULL OR k.user_id = $user_id)
+                AND ($knowledge_type IS NULL OR k.knowledge_type = $knowledge_type)
+                AND ($importance_level IS NULL OR k.importance_level = $importance_level)
+                RETURN k, k.knowledge_type, k.importance_level, k.verification_status
+                ORDER BY k.importance_level, k.created_at DESC
+            """,
+            
+            # Secret Knowledge Detection
+            "secret_knowledge": """
+                MATCH (c:Character {story_id: $story_id})-[knows:KNOWS]->(k:Knowledge)
+                WHERE ($user_id IS NULL OR c.user_id = $user_id)
+                AND k.is_secret = true
+                AND knows.sharing_restrictions IN ['must_keep_secret', 'conditional_sharing']
+                RETURN c, k, knows.sharing_restrictions, knows.emotional_impact
+                ORDER BY k.importance_level DESC
+            """,
+            
+            # Temporal Knowledge Conflicts with Enhanced Detection
             "temporal_knowledge_conflicts": """
                 MATCH (c:Character {story_id: $story_id})-[:KNOWS]->(k1:Knowledge)
                 MATCH (c)-[:KNOWS]->(k2:Knowledge)
@@ -219,20 +367,114 @@ class CineGraphAgent:
                 AND k1.knowledge_id <> k2.knowledge_id
                 AND k1.valid_from > k2.valid_to
                 AND NOT EXISTS((k1)-[:CONTRADICTS]->(k2))
-                RETURN c, k1, k2
+                RETURN c, k1, k2, k1.importance_level as k1_importance, k2.importance_level as k2_importance
+                ORDER BY k1.importance_level DESC
             """,
-            "story_timeline": """
+            
+            # Enhanced Story Timeline
+            "story_timeline_detailed": """
                 MATCH (s:Scene {story_id: $story_id})
                 WHERE ($user_id IS NULL OR s.user_id = $user_id)
-                OPTIONAL MATCH (s)-[:OCCURS_IN]->(l:Location)
-                RETURN s, l
+                OPTIONAL MATCH (s)-[occurs:OCCURS_IN]->(l:Location)
+                OPTIONAL MATCH (c:Character)-[present:PRESENT_IN]->(s)
+                RETURN s, l, occurs.time_of_day, occurs.weather_conditions, 
+                       collect(DISTINCT {character: c.name, participation: present.participation_level}) as characters
                 ORDER BY s.scene_order ASC
             """,
+            
+            # Knowledge Propagation with Strength Analysis
             "knowledge_propagation": """
-                MATCH (k1:Knowledge {story_id: $story_id})-[:IMPLIES]->(k2:Knowledge)
+                MATCH (k1:Knowledge {story_id: $story_id})-[implies:IMPLIES]->(k2:Knowledge)
                 WHERE ($user_id IS NULL OR k1.user_id = $user_id)
-                RETURN k1, k2
-                ORDER BY k1.created_at
+                RETURN k1, k2, implies.implication_strength, implies.logical_basis
+                ORDER BY implies.implication_strength DESC, k1.created_at
+            """,
+            
+            # Contradiction Detection with Severity
+            "contradictions_by_severity": """
+                MATCH (k1:Knowledge {story_id: $story_id})-[contradicts:CONTRADICTS]->(k2:Knowledge)
+                WHERE ($user_id IS NULL OR k1.user_id = $user_id)
+                AND ($severity IS NULL OR contradicts.severity = $severity)
+                AND contradicts.resolution_status = 'unresolved'
+                RETURN k1, k2, contradicts.severity, contradicts.contradiction_type, 
+                       contradicts.detected_at, contradicts.resolution_notes
+                ORDER BY 
+                    CASE contradicts.severity 
+                        WHEN 'critical' THEN 1
+                        WHEN 'major' THEN 2
+                        WHEN 'minor' THEN 3
+                        WHEN 'potential' THEN 4
+                        ELSE 5
+                    END,
+                    contradicts.detected_at DESC
+            """,
+            
+            # Character Activity Analysis
+            "character_activity_timeline": """
+                MATCH (c:Character {name: $character_name, story_id: $story_id})
+                WHERE ($user_id IS NULL OR c.user_id = $user_id)
+                OPTIONAL MATCH (c)-[present:PRESENT_IN]->(s:Scene)
+                OPTIONAL MATCH (c)-[knows:KNOWS]->(k:Knowledge)
+                RETURN c, 
+                       collect(DISTINCT {scene: s.title, order: s.scene_order, participation: present.participation_level}) as scenes,
+                       collect(DISTINCT {knowledge: k.content, learned_at: knows.learned_at, confidence: knows.confidence_level}) as knowledge
+                ORDER BY c.first_appearance
+            """,
+            
+            # Location Accessibility Analysis
+            "location_accessibility": """
+                MATCH (l:Location {story_id: $story_id})
+                WHERE ($user_id IS NULL OR l.user_id = $user_id)
+                AND ($accessibility IS NULL OR l.accessibility = $accessibility)
+                OPTIONAL MATCH (s:Scene)-[occurs:OCCURS_IN]->(l)
+                RETURN l, l.accessibility, l.location_type, count(s) as scene_count
+                ORDER BY l.accessibility, scene_count DESC
+            """,
+            
+            # Relationship Strength Analysis
+            "relationship_strength_analysis": """
+                MATCH (c1:Character {story_id: $story_id})-[r:RELATIONSHIP]->(c2:Character)
+                WHERE ($user_id IS NULL OR c1.user_id = $user_id)
+                AND ($min_strength IS NULL OR r.relationship_strength >= $min_strength)
+                RETURN c1, c2, r.relationship_type, r.relationship_strength, r.trust_level, 
+                       r.emotional_valence, r.is_mutual
+                ORDER BY r.relationship_strength DESC, r.trust_level DESC
+            """,
+            
+            # Character Trust Network
+            "character_trust_network": """
+                MATCH (c1:Character {story_id: $story_id})-[r:RELATIONSHIP]->(c2:Character)
+                WHERE ($user_id IS NULL OR c1.user_id = $user_id)
+                AND r.trust_level >= $min_trust_level
+                RETURN c1, c2, r.trust_level, r.relationship_type, r.established_at
+                ORDER BY r.trust_level DESC
+            """,
+            
+            # Knowledge Sharing Analysis
+            "knowledge_sharing_patterns": """
+                MATCH (c1:Character {story_id: $story_id})-[knows:KNOWS]->(k:Knowledge)
+                MATCH (c2:Character {story_id: $story_id})-[knows2:KNOWS]->(k)
+                WHERE ($user_id IS NULL OR c1.user_id = $user_id)
+                AND c1.character_id <> c2.character_id
+                AND knows.learned_at < knows2.learned_at
+                RETURN c1, c2, k, knows.learned_at as first_learned, knows2.learned_at as second_learned,
+                       knows.sharing_restrictions, knows2.learned_from
+                ORDER BY knows.learned_at
+            """,
+            
+            # Scene Participation Analysis
+            "scene_participation_analysis": """
+                MATCH (s:Scene {story_id: $story_id})
+                WHERE ($user_id IS NULL OR s.user_id = $user_id)
+                OPTIONAL MATCH (c:Character)-[present:PRESENT_IN]->(s)
+                RETURN s, s.scene_order, s.word_count,
+                       collect({
+                           character: c.name,
+                           participation: present.participation_level,
+                           dialogue_count: present.dialogue_count,
+                           state: present.character_state
+                       }) as participants
+                ORDER BY s.scene_order
             """
         }
     
@@ -242,63 +484,165 @@ class CineGraphAgent:
         
         return f"""
         You are CineGraphAgent, an advanced AI assistant specialized in story analysis, consistency validation, and temporal reasoning.
-        You have enhanced Cypher query capabilities and deep knowledge of the CineGraph schema.
+        You have enhanced Cypher query capabilities and deep knowledge of the complete CineGraph schema.
         
-        GRAPH SCHEMA:
+        COMPLETE CINEGRAPH SCHEMA:
         {schema_json}
         
         AVAILABLE TOOLS:
         1. graph_query: Execute Cypher queries against the story knowledge graph
         2. narrative_context: Retrieve raw scene text for analysis
-        3. optimized_query: Execute optimized queries using templates
+        3. optimized_query: Execute optimized queries using enhanced templates
         4. validate_query: Validate Cypher queries before execution
         
-        CYPHER QUERY CAPABILITIES:
-        - You can write custom Cypher queries using the provided schema
-        - Always include story_id and user_id filters for data isolation
-        - Use temporal constraints for time-based queries
-        - Leverage relationship patterns for complex analysis
+        ENHANCED SCHEMA CAPABILITIES:
         
-        COMMON PATTERNS:
-        - Character knowledge: (c:Character)-[:KNOWS]->(k:Knowledge)
-        - Scene presence: (c:Character)-[:PRESENT_IN]->(s:Scene)
-        - Location mapping: (s:Scene)-[:OCCURS_IN]->(l:Location)
-        - Character relationships: (c1:Character)-[:RELATIONSHIP]->(c2:Character)
-        - Knowledge contradictions: (k1:Knowledge)-[:CONTRADICTS]->(k2:Knowledge)
-        - Knowledge implications: (k1:Knowledge)-[:IMPLIES]->(k2:Knowledge)
+        CHARACTER ENTITIES:
+        - Enhanced properties: aliases, role, activity status, temporal tracking
+        - Rich character analysis with first_appearance, last_mentioned
+        - Activity tracking with is_active boolean
+        
+        KNOWLEDGE ENTITIES:
+        - Knowledge types: factual, relationship, emotional, social, secret
+        - Importance levels: critical, important, minor
+        - Verification status: confirmed, suspected, false, unknown
+        - Secret knowledge tracking with sharing restrictions
+        
+        SCENE ENTITIES:
+        - Enhanced scene tracking with word counts and character presence
+        - Timeline integration with timestamp_in_story
+        - Character presence tracking with participation levels
+        
+        LOCATION ENTITIES:
+        - Location types and accessibility levels
+        - Activity tracking and usage patterns
+        - Detailed environmental context
+        
+        ENHANCED RELATIONSHIPS:
+        
+        KNOWS Relationship (Character -> Knowledge):
+        - learned_at: When knowledge was acquired
+        - confidence_level: certain, probable, suspected, rumored
+        - sharing_restrictions: can_share, must_keep_secret, conditional_sharing
+        - emotional_impact: positive, negative, neutral, shocking
+        - knowledge_context: Circumstances of acquisition
+        
+        RELATIONSHIP Relationship (Character -> Character):
+        - relationship_type: family, friend, enemy, ally, romantic, professional, stranger
+        - relationship_strength: 1-10 scale
+        - trust_level: 1-10 scale
+        - emotional_valence: love, like, neutral, dislike, hate
+        - power_dynamic: equal, dominant, submissive, complex
+        - temporal tracking: established_at, last_interaction
+        
+        PRESENT_IN Relationship (Character -> Scene):
+        - arrival_time, departure_time: Scene timing
+        - participation_level: active, passive, mentioned, background
+        - dialogue_count: Number of dialogue lines
+        - character_state: Emotional/physical state
+        - actions_performed: Array of key actions
+        
+        OCCURS_IN Relationship (Scene -> Location):
+        - Environmental context: time_of_day, weather_conditions
+        - scene_duration: How long the scene lasts
+        - location_accessibility: How characters accessed location
+        
+        CONTRADICTS Relationship (Knowledge -> Knowledge):
+        - contradiction_type: factual, temporal, logical, character_behavior
+        - severity: critical, major, minor, potential
+        - resolution_status: unresolved, resolved, false_positive, ignored
+        - detected_at: When contradiction was found
+        
+        IMPLIES Relationship (Knowledge -> Knowledge):
+        - implication_strength: certain, probable, possible, weak
+        - logical_basis: Explanation of the logical connection
+        
+        ENHANCED QUERY PATTERNS:
+        
+        1. CHARACTER ANALYSIS:
+        - Character knowledge at specific times with confidence levels
+        - Character activity timelines and participation patterns
+        - Character relationship networks with trust analysis
+        - Character aliases and role tracking
+        
+        2. KNOWLEDGE ANALYSIS:
+        - Knowledge by type and importance level
+        - Secret knowledge detection and sharing patterns
+        - Knowledge propagation and implication chains
+        - Verification status tracking
+        
+        3. TEMPORAL ANALYSIS:
+        - Bi-temporal queries with valid_from/valid_to
+        - Character knowledge evolution over time
+        - Scene timeline with environmental context
+        - Relationship changes over time
+        
+        4. CONSISTENCY VALIDATION:
+        - Contradiction detection with severity levels
+        - Temporal consistency checking
+        - Character behavior consistency
+        - Knowledge verification and conflict resolution
+        
+        5. RELATIONSHIP ANALYSIS:
+        - Relationship strength and trust networks
+        - Power dynamics and emotional valence
+        - Mutual relationship validation
+        - Relationship evolution tracking
+        
+        ENHANCED QUERY TEMPLATES AVAILABLE:
+        - character_knowledge_at_time: Knowledge with confidence and emotional impact
+        - character_relationships_detailed: Full relationship analysis
+        - secret_knowledge: Secret knowledge with sharing restrictions
+        - contradictions_by_severity: Prioritized contradiction detection
+        - knowledge_sharing_patterns: Knowledge propagation analysis
+        - character_trust_network: Trust-based relationship mapping
+        - location_accessibility: Location usage and access patterns
+        - scene_participation_analysis: Character participation in scenes
         
         TEMPORAL QUERY EXAMPLES:
-        - "What did character X know at time Y?"
-          MATCH (c:Character {{name: $character_name, story_id: $story_id}})-[:KNOWS]->(k:Knowledge)
-          WHERE k.valid_from <= $timestamp AND (k.valid_to IS NULL OR k.valid_to >= $timestamp)
-          RETURN k
         
-        - "What events occurred before character X learned about Y?"
-          MATCH (c:Character {{name: $character_name, story_id: $story_id}})-[:KNOWS]->(k:Knowledge {{content: $knowledge_content}})
-          MATCH (s:Scene {{story_id: $story_id}})
-          WHERE s.created_at < k.valid_from
-          RETURN s
+        "What did character X know at time Y with confidence levels?"
+        MATCH (c:Character {{name: $character_name, story_id: $story_id}})-[knows:KNOWS]->(k:Knowledge)
+        WHERE k.valid_from <= $timestamp AND (k.valid_to IS NULL OR k.valid_to >= $timestamp)
+        RETURN k, knows.confidence_level, knows.emotional_impact, knows.learned_at
         
-        CONSISTENCY VALIDATION:
-        - Look for temporal contradictions (events occurring out of order)
-        - Check character knowledge consistency (characters knowing things they shouldn't)
-        - Validate location consistency (characters being in multiple places)
-        - Ensure relationship consistency (conflicting relationships)
-        - Detect knowledge conflicts and implications
+        "Find all secret knowledge that must be kept secret:"
+        MATCH (c:Character {{story_id: $story_id}})-[knows:KNOWS]->(k:Knowledge)
+        WHERE k.is_secret = true AND knows.sharing_restrictions = 'must_keep_secret'
+        RETURN c, k, knows.emotional_impact
         
-        QUERY OPTIMIZATION:
-        - Use query templates for common operations
-        - Cache frequently used queries
-        - Add appropriate indexes and constraints
-        - Optimize for story_id and user_id filtering
+        "Analyze relationship strength between characters:"
+        MATCH (c1:Character {{story_id: $story_id}})-[r:RELATIONSHIP]->(c2:Character)
+        WHERE r.relationship_strength >= 7 AND r.trust_level >= 8
+        RETURN c1, c2, r.relationship_type, r.relationship_strength, r.trust_level
+        
+        VALIDATION RULES:
+        - Entity validation: Unique names, required fields, proper types
+        - Relationship validation: Valid connections, temporal consistency
+        - Consistency rules: Timeline coherence, character behavior consistency
+        - Enum validation: All enum values must match schema definitions
         
         SAFETY GUIDELINES:
         - Only use READ operations (MATCH, RETURN, WHERE, ORDER BY, LIMIT)
         - Never use destructive operations (DELETE, DROP, CREATE, MERGE, SET, REMOVE)
-        - Always include proper data isolation filters
-        - Validate queries before execution
+        - Always include proper data isolation filters (story_id, user_id)
+        - Validate queries before execution using enhanced validation
+        - Use enum values exactly as defined in schema
         
-        Always provide detailed explanations for your findings and assign appropriate severity levels.
+        ANALYSIS PRIORITIES:
+        1. Critical contradictions and consistency issues
+        2. Character knowledge and relationship inconsistencies
+        3. Temporal logic violations
+        4. Secret knowledge leakage patterns
+        5. Relationship strength and trust analysis
+        
+        Always provide detailed explanations with:
+        - Severity levels (critical, major, minor, potential)
+        - Confidence levels and verification status
+        - Temporal context and timeline implications
+        - Relationship dynamics and trust implications
+        - Actionable recommendations for resolution
+        
         Use the enhanced capabilities to provide deeper insights and more accurate analysis.
         """
     
@@ -332,21 +676,39 @@ class CineGraphAgent:
             },
             {
                 "name": "optimized_query",
-                "description": "Execute an optimized query using predefined templates",
+                "description": "Execute an optimized query using enhanced predefined templates",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "template_name": {
                             "type": "string",
-                            "description": "Name of the query template to use",
-                            "enum": ["character_knowledge_at_time", "characters_in_scene", "scene_location", 
-                                   "character_relationships", "temporal_knowledge_conflicts", "story_timeline", 
-                                   "knowledge_propagation"]
+                            "description": "Name of the enhanced query template to use",
+                            "enum": [
+                                "character_knowledge_at_time", "characters_in_scene", "scene_location_details",
+                                "character_relationships_detailed", "knowledge_by_type", "secret_knowledge",
+                                "temporal_knowledge_conflicts", "story_timeline_detailed", "knowledge_propagation",
+                                "contradictions_by_severity", "character_activity_timeline", "location_accessibility",
+                                "relationship_strength_analysis", "character_trust_network", "knowledge_sharing_patterns",
+                                "scene_participation_analysis"
+                            ]
                         },
                         "params": {
                             "type": "object",
                             "description": "Parameters for the template query",
-                            "properties": {},
+                            "properties": {
+                                "story_id": {"type": "string", "description": "Required story identifier"},
+                                "user_id": {"type": "string", "description": "Required user identifier"},
+                                "character_name": {"type": "string", "description": "Character name for character-specific queries"},
+                                "scene_id": {"type": "string", "description": "Scene identifier for scene-specific queries"},
+                                "timestamp": {"type": "string", "description": "Timestamp for temporal queries"},
+                                "knowledge_type": {"type": "string", "enum": ["factual", "relationship", "emotional", "social", "secret"]},
+                                "importance_level": {"type": "string", "enum": ["critical", "important", "minor"]},
+                                "severity": {"type": "string", "enum": ["critical", "major", "minor", "potential"]},
+                                "accessibility": {"type": "string", "enum": ["public", "private", "restricted", "secret"]},
+                                "min_strength": {"type": "integer", "minimum": 1, "maximum": 10},
+                                "min_trust_level": {"type": "integer", "minimum": 1, "maximum": 10}
+                            },
+                            "required": ["story_id", "user_id"],
                             "additionalProperties": True
                         }
                     },
@@ -391,8 +753,179 @@ class CineGraphAgent:
         """Setup Redis alerts listener for processing contradiction alerts."""
         alert_manager.add_alert_handler("cinegraph_agent", self._handle_alert)
     
+    def validate_schema_property(self, entity_type: str, property_name: str, value: Any) -> Tuple[bool, str]:
+        """Validate a property value against the schema definition."""
+        try:
+            # Find the entity in schema
+            entity_schema = None
+            for entity in self.schema_context['entities']:
+                if entity['name'] == entity_type:
+                    entity_schema = entity
+                    break
+            
+            if not entity_schema:
+                return False, f"Entity type '{entity_type}' not found in schema"
+            
+            # Check if property exists
+            if property_name not in entity_schema['properties']:
+                return False, f"Property '{property_name}' not found for entity '{entity_type}'"
+            
+            prop_def = entity_schema['properties'][property_name]
+            
+            # Check required fields
+            if prop_def.get('required', False) and value is None:
+                return False, f"Required property '{property_name}' cannot be null"
+            
+            # Check type validation
+            expected_type = prop_def.get('type', 'string')
+            if expected_type == 'enum':
+                allowed_values = prop_def.get('values', [])
+                if value not in allowed_values:
+                    return False, f"Value '{value}' not in allowed enum values: {allowed_values}"
+            elif expected_type == 'integer':
+                if not isinstance(value, int):
+                    return False, f"Expected integer, got {type(value)}"
+                # Check min/max constraints
+                if 'min' in prop_def and value < prop_def['min']:
+                    return False, f"Value {value} below minimum {prop_def['min']}"
+                if 'max' in prop_def and value > prop_def['max']:
+                    return False, f"Value {value} above maximum {prop_def['max']}"
+            elif expected_type == 'boolean':
+                if not isinstance(value, bool):
+                    return False, f"Expected boolean, got {type(value)}"
+            elif expected_type == 'array':
+                if not isinstance(value, list):
+                    return False, f"Expected array, got {type(value)}"
+            
+            return True, "Valid"
+            
+        except Exception as e:
+            return False, f"Validation error: {str(e)}"
+    
+    def validate_relationship_property(self, relationship_type: str, property_name: str, value: Any) -> Tuple[bool, str]:
+        """Validate a relationship property value against the schema definition."""
+        try:
+            # Find the relationship in schema
+            relationship_schema = None
+            for relationship in self.schema_context['relationships']:
+                if relationship['type'] == relationship_type:
+                    relationship_schema = relationship
+                    break
+            
+            if not relationship_schema:
+                return False, f"Relationship type '{relationship_type}' not found in schema"
+            
+            # Check if property exists
+            if property_name not in relationship_schema['properties']:
+                return False, f"Property '{property_name}' not found for relationship '{relationship_type}'"
+            
+            prop_def = relationship_schema['properties'][property_name]
+            
+            # Check required fields
+            if prop_def.get('required', False) and value is None:
+                return False, f"Required property '{property_name}' cannot be null"
+            
+            # Check type validation
+            expected_type = prop_def.get('type', 'string')
+            if expected_type == 'enum':
+                allowed_values = prop_def.get('values', [])
+                if value not in allowed_values:
+                    return False, f"Value '{value}' not in allowed enum values: {allowed_values}"
+            elif expected_type == 'integer':
+                if not isinstance(value, int):
+                    return False, f"Expected integer, got {type(value)}"
+                # Check min/max constraints
+                if 'min' in prop_def and value < prop_def['min']:
+                    return False, f"Value {value} below minimum {prop_def['min']}"
+                if 'max' in prop_def and value > prop_def['max']:
+                    return False, f"Value {value} above maximum {prop_def['max']}"
+            
+            return True, "Valid"
+            
+        except Exception as e:
+            return False, f"Validation error: {str(e)}"
+    
+    def validate_temporal_consistency(self, valid_from: str, valid_to: str = None) -> Tuple[bool, str]:
+        """Validate temporal consistency for bi-temporal properties."""
+        try:
+            from datetime import datetime
+            
+            # Parse timestamps
+            from_dt = datetime.fromisoformat(valid_from.replace('Z', '+00:00'))
+            
+            if valid_to:
+                to_dt = datetime.fromisoformat(valid_to.replace('Z', '+00:00'))
+                if from_dt > to_dt:
+                    return False, f"valid_from ({valid_from}) must be <= valid_to ({valid_to})"
+            
+            return True, "Temporal consistency valid"
+            
+        except Exception as e:
+            return False, f"Temporal validation error: {str(e)}"
+    
+    def validate_enum_value(self, enum_name: str, value: str) -> Tuple[bool, str]:
+        """Validate that a value is in the allowed enum values."""
+        try:
+            if enum_name not in self.schema_context['enums']:
+                return False, f"Enum '{enum_name}' not found in schema"
+            
+            allowed_values = self.schema_context['enums'][enum_name]
+            if value not in allowed_values:
+                return False, f"Value '{value}' not in allowed enum values: {allowed_values}"
+            
+            return True, "Valid enum value"
+            
+        except Exception as e:
+            return False, f"Enum validation error: {str(e)}"
+    
+    def validate_query_parameters(self, query: str, params: Dict[str, Any]) -> Tuple[bool, str]:
+        """Validate query parameters against schema requirements."""
+        try:
+            validation_errors = []
+            
+            # Check required parameters
+            required_params = ['story_id', 'user_id']
+            for param in required_params:
+                if param not in params:
+                    validation_errors.append(f"Missing required parameter: {param}")
+            
+            # Validate enum parameters if present
+            enum_params = {
+                'knowledge_type': 'knowledge_type',
+                'importance_level': 'importance_level',
+                'severity': 'severity',
+                'relationship_type': 'relationship_type',
+                'emotional_valence': 'emotional_valence',
+                'confidence_level': 'confidence_level'
+            }
+            
+            for param_name, enum_name in enum_params.items():
+                if param_name in params:
+                    is_valid, error = self.validate_enum_value(enum_name, params[param_name])
+                    if not is_valid:
+                        validation_errors.append(f"Parameter '{param_name}': {error}")
+            
+            # Validate integer range parameters
+            if 'relationship_strength' in params:
+                strength = params['relationship_strength']
+                if not isinstance(strength, int) or strength < 1 or strength > 10:
+                    validation_errors.append("relationship_strength must be an integer between 1 and 10")
+            
+            if 'trust_level' in params:
+                trust = params['trust_level']
+                if not isinstance(trust, int) or trust < 1 or trust > 10:
+                    validation_errors.append("trust_level must be an integer between 1 and 10")
+            
+            if validation_errors:
+                return False, "; ".join(validation_errors)
+            
+            return True, "Parameters valid"
+            
+        except Exception as e:
+            return False, f"Parameter validation error: {str(e)}"
+    
     async def validate_cypher_query(self, cypher_query: str) -> Tuple[bool, str]:
-        """Validate a Cypher query for safety and correctness."""
+        """Enhanced validation of Cypher queries for safety and schema compliance."""
         try:
             # Check for dangerous operations
             query_upper = cypher_query.upper()
@@ -401,28 +934,166 @@ class CineGraphAgent:
                     return False, f"Dangerous operation '{dangerous_op}' detected. Only read operations are allowed."
             
             # Check for required data isolation filters
-            if 'story_id' not in cypher_query.lower() and '$story_id' not in cypher_query.lower():
+            if 'story_id' not in query_upper and '$story_id' not in query_upper:
                 return False, "Query must include story_id filter for data isolation"
             
+            # Check for proper entity and relationship usage
+            valid_entities = [entity['name'] for entity in self.schema_context['entities']]
+            valid_relationships = [rel['type'] for rel in self.schema_context['relationships']]
+            
             # Basic syntax validation
-            if not cypher_query.strip():
-                return False, "Query cannot be empty"
+            if not self._validate_cypher_syntax(cypher_query):
+                return False, "Invalid Cypher syntax detected"
             
-            # Check for balanced parentheses and brackets
-            if cypher_query.count('(') != cypher_query.count(')'):
-                return False, "Unbalanced parentheses in query"
+            # Check for proper temporal query patterns
+            if 'valid_from' in query_upper or 'valid_to' in query_upper:
+                if not self._validate_temporal_query_pattern(cypher_query):
+                    return False, "Invalid temporal query pattern. Use proper temporal constraints."
             
-            if cypher_query.count('[') != cypher_query.count(']'):
-                return False, "Unbalanced brackets in query"
-            
-            # Check for proper MATCH/RETURN structure
-            if 'MATCH' not in query_upper and 'RETURN' not in query_upper:
-                return False, "Query must contain MATCH and RETURN clauses"
+            # Check for enum usage in query
+            enum_validation_errors = self._validate_enum_usage_in_query(cypher_query)
+            if enum_validation_errors:
+                return False, f"Enum validation errors: {'; '.join(enum_validation_errors)}"
             
             return True, "Query validation passed"
             
         except Exception as e:
-            return False, f"Validation error: {str(e)}"
+            return False, f"Query validation error: {str(e)}"
+    
+    def _validate_cypher_syntax(self, query: str) -> bool:
+        """Basic Cypher syntax validation."""
+        try:
+            # Check for balanced parentheses
+            paren_count = 0
+            bracket_count = 0
+            brace_count = 0
+            
+            for char in query:
+                if char == '(':
+                    paren_count += 1
+                elif char == ')':
+                    paren_count -= 1
+                elif char == '[':
+                    bracket_count += 1
+                elif char == ']':
+                    bracket_count -= 1
+                elif char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                
+                # Check for negative counts (closing before opening)
+                if paren_count < 0 or bracket_count < 0 or brace_count < 0:
+                    return False
+            
+            # Check if all are balanced
+            if paren_count != 0 or bracket_count != 0 or brace_count != 0:
+                return False
+            
+            # Check for basic Cypher structure
+            query_upper = query.upper()
+            if 'MATCH' not in query_upper and 'RETURN' not in query_upper:
+                return False
+            
+            return True
+            
+        except Exception:
+            return False
+    
+    def _validate_temporal_query_pattern(self, query: str) -> bool:
+        """Validate temporal query patterns for bi-temporal support."""
+        try:
+            # Check for proper temporal constraints
+            query_lower = query.lower()
+            
+            # If valid_from is used, ensure proper comparison
+            if 'valid_from' in query_lower:
+                # Should have proper temporal comparison
+                if not any(op in query_lower for op in ['<=', '>=', '<', '>', '=']):
+                    return False
+            
+            # If valid_to is used, ensure proper null handling
+            if 'valid_to' in query_lower:
+                # Should handle null values properly
+                if 'is null' not in query_lower and 'is not null' not in query_lower:
+                    return False
+            
+            return True
+            
+        except Exception:
+            return False
+    
+    def _validate_enum_usage_in_query(self, query: str) -> List[str]:
+        """Validate enum values used in query against schema definitions."""
+        errors = []
+        
+        try:
+            # Extract potential enum values from query
+            import re
+            
+            # Find string literals in query
+            string_literals = re.findall(r"'([^']+)'", query)
+            string_literals.extend(re.findall(r'"([^"]+)"', query))
+            
+            # Check against known enum values
+            for enum_name, enum_values in self.schema_context['enums'].items():
+                for literal in string_literals:
+                    if literal in enum_values:
+                        # This is a valid enum usage
+                        continue
+                    elif literal.lower() in [v.lower() for v in enum_values]:
+                        # Case mismatch
+                        errors.append(f"Enum value '{literal}' has incorrect case. Use: {enum_values}")
+            
+            return errors
+            
+        except Exception as e:
+            return [f"Enum validation error: {str(e)}"]
+    
+    def get_query_suggestions(self, query: str) -> List[str]:
+        """Get optimization suggestions for a query based on enhanced schema."""
+        suggestions = []
+        
+        try:
+            query_upper = query.upper()
+            
+            # Suggest using query templates
+            if 'CHARACTER' in query_upper and 'KNOWS' in query_upper:
+                suggestions.append("Consider using 'character_knowledge_at_time' template for character knowledge queries")
+            
+            if 'RELATIONSHIP' in query_upper and 'CHARACTER' in query_upper:
+                suggestions.append("Consider using 'character_relationships_detailed' template for relationship analysis")
+            
+            if 'CONTRADICTS' in query_upper:
+                suggestions.append("Consider using 'contradictions_by_severity' template for contradiction analysis")
+            
+            # Suggest adding filters for performance
+            if 'story_id' not in query_upper:
+                suggestions.append("Add story_id filter for better performance and data isolation")
+            
+            if 'user_id' not in query_upper:
+                suggestions.append("Add user_id filter for proper data isolation")
+            
+            # Suggest using indexes
+            if 'ORDER BY' in query_upper:
+                suggestions.append("Consider adding appropriate indexes for ORDER BY clauses")
+            
+            # Suggest temporal optimizations
+            if 'valid_from' in query.lower() or 'valid_to' in query.lower():
+                suggestions.append("Use temporal indexes for better performance on temporal queries")
+            
+            # Suggest enum constraints
+            if any(enum_name in query_upper for enum_name in self.schema_context['enums']):
+                suggestions.append("Use enum constraints to improve query performance")
+            
+            return suggestions
+            
+        except Exception as e:
+            return [f"Error generating suggestions: {str(e)}"]
+    
+    def _get_query_suggestions(self, query: str) -> List[str]:
+        """Legacy method for backward compatibility."""
+        return self.get_query_suggestions(query)
     
     def _generate_query_hash(self, cypher_query: str, params: dict) -> str:
         """Generate a hash for query caching."""
@@ -517,26 +1188,6 @@ class CineGraphAgent:
             "suggested_optimizations": self._get_query_suggestions(cypher_query) if is_valid else []
         }
     
-    def _get_query_suggestions(self, cypher_query: str) -> List[str]:
-        """Provide optimization suggestions for a query."""
-        suggestions = []
-        
-        query_upper = cypher_query.upper()
-        
-        # Check for common optimization opportunities
-        if 'LIMIT' not in query_upper and 'COUNT' not in query_upper:
-            suggestions.append("Consider adding a LIMIT clause to prevent large result sets")
-        
-        if 'ORDER BY' in query_upper and 'LIMIT' not in query_upper:
-            suggestions.append("ORDER BY without LIMIT can be expensive - consider adding LIMIT")
-        
-        if 'user_id' not in cypher_query.lower():
-            suggestions.append("Consider adding user_id filter for better data isolation")
-        
-        if cypher_query.count('MATCH') > 3:
-            suggestions.append("Complex query with multiple MATCH clauses - consider breaking into smaller queries")
-        
-        return suggestions
     
     async def narrative_context(self, story_id: str, scene_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
         """Return raw scene text for a given story ID."""

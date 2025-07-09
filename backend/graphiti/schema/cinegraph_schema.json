@@ -1,106 +1,234 @@
 {
+  "enums": {
+    "knowledge_type": ["factual", "relationship", "emotional", "social", "secret"],
+    "importance_level": ["critical", "important", "minor"],
+    "verification_status": ["confirmed", "suspected", "false", "unknown"],
+    "location_type": ["city", "building", "room", "outdoor"],
+    "accessibility": ["public", "private", "restricted", "secret"],
+    "participation_level": ["active", "passive", "mentioned", "background"],
+    "relationship_type": ["family", "friend", "enemy", "ally", "romantic", "professional", "stranger"],
+    "emotional_valence": ["love", "like", "neutral", "dislike", "hate"],
+    "relationship_status": ["current", "past", "complicated", "unknown"],
+    "power_dynamic": ["equal", "dominant", "submissive", "complex"],
+    "confidence_level": ["certain", "probable", "suspected", "rumored"],
+    "sharing_restrictions": ["can_share", "must_keep_secret", "conditional_sharing"],
+    "emotional_impact": ["positive", "negative", "neutral", "shocking"],
+    "contradiction_type": ["factual", "temporal", "logical", "character_behavior"],
+    "severity": ["critical", "major", "minor", "potential"],
+    "resolution_status": ["unresolved", "resolved", "false_positive", "ignored"],
+    "implication_strength": ["certain", "probable", "possible", "weak"]
+  },
   "entities": [
     {
       "name": "Character",
+      "description": "Represents individual characters in the story",
       "properties": {
-        "character_id": {"type": "string", "unique": true},
-        "name": {"type": "string", "unique": true},
-        "description": "string",
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>",
-        "deleted_at": "<temporal>"
+        "character_id": {"type": "string", "unique": true, "required": true},
+        "name": {"type": "string", "required": true},
+        "aliases": {"type": "array", "items": "string"},
+        "description": {"type": "string"},
+        "role": {"type": "string"},
+        "first_appearance": {"type": "timestamp"},
+        "last_mentioned": {"type": "timestamp"},
+        "is_active": {"type": "boolean", "default": true},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true},
+        "deleted_at": {"type": "timestamp", "temporal": true}
       }
     },
     {
       "name": "Knowledge",
+      "description": "Represents discrete pieces of information that characters can possess",
       "properties": {
-        "knowledge_id": {"type": "string", "unique": true},
-        "content": "string",
-        "valid_from": "<temporal>",
-        "valid_to": "<temporal>",
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>"
+        "knowledge_id": {"type": "string", "unique": true, "required": true},
+        "content": {"type": "string", "required": true},
+        "knowledge_type": {"type": "enum", "values": ["factual", "relationship", "emotional", "social", "secret"]},
+        "importance_level": {"type": "enum", "values": ["critical", "important", "minor"]},
+        "source_scene": {"type": "string"},
+        "is_secret": {"type": "boolean", "default": false},
+        "verification_status": {"type": "enum", "values": ["confirmed", "suspected", "false", "unknown"]},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
       }
     },
     {
       "name": "Scene",
+      "description": "Represents narrative scenes or story segments",
       "properties": {
-        "scene_id": {"type": "string", "unique": true},
-        "name": "string",
-        "scene_order": {"type": "integer", "sequential": true},
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>"
+        "scene_id": {"type": "string", "unique": true, "required": true},
+        "title": {"type": "string"},
+        "content": {"type": "text"},
+        "scene_order": {"type": "integer", "sequential": true, "required": true},
+        "timestamp_in_story": {"type": "timestamp"},
+        "location": {"type": "string"},
+        "characters_present": {"type": "array", "items": "string"},
+        "word_count": {"type": "integer"},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
       }
     },
     {
       "name": "Location",
+      "description": "Represents places where story events occur",
       "properties": {
-        "location_id": {"type": "string", "unique": true},
-        "name": {"type": "string", "unique": true},
-        "details": "string",
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>"
+        "location_id": {"type": "string", "unique": true, "required": true},
+        "name": {"type": "string", "required": true},
+        "description": {"type": "string"},
+        "location_type": {"type": "enum", "values": ["city", "building", "room", "outdoor"]},
+        "accessibility": {"type": "enum", "values": ["public", "private", "restricted", "secret"]},
+        "first_mentioned": {"type": "timestamp"},
+        "is_active": {"type": "boolean", "default": true},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
       }
     }
   ],
   "relationships": [
     {
       "type": "KNOWS",
+      "description": "Connects characters to knowledge they possess",
       "from": "Character",
-      "to": "Character",
+      "to": "Knowledge",
       "properties": {
-        "intensity": "integer",
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>"
+        "learned_at": {"type": "timestamp", "required": true},
+        "learned_from": {"type": "string"},
+        "confidence_level": {"type": "enum", "values": ["certain", "probable", "suspected", "rumored"]},
+        "knowledge_context": {"type": "string"},
+        "is_current": {"type": "boolean", "default": true},
+        "sharing_restrictions": {"type": "enum", "values": ["can_share", "must_keep_secret", "conditional_sharing"]},
+        "emotional_impact": {"type": "enum", "values": ["positive", "negative", "neutral", "shocking"]},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
       }
     },
     {
       "type": "RELATIONSHIP",
+      "description": "Connects characters to other characters with relationship context",
       "from": "Character",
       "to": "Character",
       "properties": {
-        "relationship_type": "string",
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>"
+        "relationship_type": {"type": "enum", "values": ["family", "friend", "enemy", "ally", "romantic", "professional", "stranger"], "required": true},
+        "relationship_strength": {"type": "integer", "min": 1, "max": 10},
+        "trust_level": {"type": "integer", "min": 1, "max": 10},
+        "emotional_valence": {"type": "enum", "values": ["love", "like", "neutral", "dislike", "hate"]},
+        "relationship_status": {"type": "enum", "values": ["current", "past", "complicated", "unknown"]},
+        "established_at": {"type": "timestamp"},
+        "last_interaction": {"type": "timestamp"},
+        "is_mutual": {"type": "boolean", "default": true},
+        "relationship_context": {"type": "string"},
+        "power_dynamic": {"type": "enum", "values": ["equal", "dominant", "submissive", "complex"]},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
       }
     },
     {
       "type": "PRESENT_IN",
+      "description": "Connects characters to scenes where they appear",
       "from": "Character",
       "to": "Scene",
       "properties": {
-        "appearance_order": "integer",
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>"
+        "arrival_time": {"type": "timestamp"},
+        "departure_time": {"type": "timestamp"},
+        "participation_level": {"type": "enum", "values": ["active", "passive", "mentioned", "background"]},
+        "character_state": {"type": "string"},
+        "dialogue_count": {"type": "integer", "min": 0},
+        "actions_performed": {"type": "array", "items": "string"},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
       }
     },
     {
       "type": "OCCURS_IN",
+      "description": "Connects scenes to locations where they take place",
       "from": "Scene",
       "to": "Location",
       "properties": {
-        "event_time": "<temporal>"
+        "scene_duration": {"type": "string"},
+        "time_of_day": {"type": "string"},
+        "weather_conditions": {"type": "string"},
+        "location_accessibility": {"type": "enum", "values": ["public", "private", "restricted", "secret"]},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "created_at": {"type": "timestamp", "temporal": true}
       }
     },
     {
       "type": "CONTRADICTS",
+      "description": "Connects knowledge items that are inconsistent with each other",
       "from": "Knowledge",
       "to": "Knowledge",
       "properties": {
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>"
+        "contradiction_type": {"type": "enum", "values": ["factual", "temporal", "logical", "character_behavior"]},
+        "severity": {"type": "enum", "values": ["critical", "major", "minor", "potential"]},
+        "detected_at": {"type": "timestamp"},
+        "resolution_status": {"type": "enum", "values": ["unresolved", "resolved", "false_positive", "ignored"]},
+        "resolution_notes": {"type": "string"},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
       }
     },
     {
       "type": "IMPLIES",
+      "description": "Connects knowledge items where one logically implies another",
       "from": "Knowledge",
       "to": "Knowledge",
       "properties": {
-        "certainty": "integer",
-        "created_at": "<temporal>",
-        "updated_at": "<temporal>"
+        "implication_strength": {"type": "enum", "values": ["certain", "probable", "possible", "weak"]},
+        "logical_basis": {"type": "string"},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
       }
     }
-  ]
+  ],
+  "validation_rules": {
+    "entity_validation": [
+      "Every Character must have a unique name within a project",
+      "Knowledge content cannot be empty or null",
+      "Scene order must be sequential and unique",
+      "Location names must be unique within a project"
+    ],
+    "relationship_validation": [
+      "KNOWS relationships require valid character_id and knowledge_id",
+      "RELATIONSHIP relationships cannot connect a character to themselves",
+      "PRESENT_IN relationships require valid character_id and scene_id",
+      "Temporal properties must be logically consistent (valid_from <= valid_to)"
+    ],
+    "consistency_rules": [
+      "Characters cannot know information before it exists in the story timeline",
+      "Characters cannot be present in scenes that occur before their first appearance",
+      "Contradictory knowledge items must be flagged for resolution",
+      "Relationship changes must be temporally consistent"
+    ]
+  }
 }
 
