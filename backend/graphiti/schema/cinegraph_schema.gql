@@ -1,0 +1,85 @@
+# CineGraph Schema Definition for Graphiti
+# This schema defines the four core entities and six relationships for the CineGraph system
+
+# ===============================
+# ENTITIES
+# ===============================
+
+type Character {
+  character_id: String! @unique
+  name: String! @unique
+  description: String
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+  deleted_at: DateTime @temporal
+}
+
+type Knowledge {
+  knowledge_id: String! @unique
+  content: String!
+  valid_from: DateTime @temporal
+  valid_to: DateTime @temporal
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+type Scene {
+  scene_id: String! @unique
+  name: String!
+  scene_order: Int! @sequential
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+type Location {
+  location_id: String! @unique
+  name: String! @unique
+  details: String
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+# ===============================
+# RELATIONSHIPS
+# ===============================
+
+type KNOWS @relationship(from: Character, to: Character) {
+  intensity: Int
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+type RELATIONSHIP @relationship(from: Character, to: Character) {
+  relationship_type: String!
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+type PRESENT_IN @relationship(from: Character, to: Scene) {
+  appearance_order: Int
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+type OCCURS_IN @relationship(from: Scene, to: Location) {
+  event_time: DateTime @temporal
+}
+
+type CONTRADICTS @relationship(from: Knowledge, to: Knowledge) {
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+type IMPLIES @relationship(from: Knowledge, to: Knowledge) {
+  certainty: Int
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+# ===============================
+# CONSTRAINTS
+# ===============================
+
+# Uniqueness constraints are handled via @unique directive on fields
+# Sequential constraint is handled via @sequential directive on scene_order
+# Temporal columns are marked with @temporal directive

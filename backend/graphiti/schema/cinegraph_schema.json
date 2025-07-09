@@ -1,0 +1,106 @@
+{
+  "entities": [
+    {
+      "name": "Character",
+      "properties": {
+        "character_id": {"type": "string", "unique": true},
+        "name": {"type": "string", "unique": true},
+        "description": "string",
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>",
+        "deleted_at": "<temporal>"
+      }
+    },
+    {
+      "name": "Knowledge",
+      "properties": {
+        "knowledge_id": {"type": "string", "unique": true},
+        "content": "string",
+        "valid_from": "<temporal>",
+        "valid_to": "<temporal>",
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>"
+      }
+    },
+    {
+      "name": "Scene",
+      "properties": {
+        "scene_id": {"type": "string", "unique": true},
+        "name": "string",
+        "scene_order": {"type": "integer", "sequential": true},
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>"
+      }
+    },
+    {
+      "name": "Location",
+      "properties": {
+        "location_id": {"type": "string", "unique": true},
+        "name": {"type": "string", "unique": true},
+        "details": "string",
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>"
+      }
+    }
+  ],
+  "relationships": [
+    {
+      "type": "KNOWS",
+      "from": "Character",
+      "to": "Character",
+      "properties": {
+        "intensity": "integer",
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>"
+      }
+    },
+    {
+      "type": "RELATIONSHIP",
+      "from": "Character",
+      "to": "Character",
+      "properties": {
+        "relationship_type": "string",
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>"
+      }
+    },
+    {
+      "type": "PRESENT_IN",
+      "from": "Character",
+      "to": "Scene",
+      "properties": {
+        "appearance_order": "integer",
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>"
+      }
+    },
+    {
+      "type": "OCCURS_IN",
+      "from": "Scene",
+      "to": "Location",
+      "properties": {
+        "event_time": "<temporal>"
+      }
+    },
+    {
+      "type": "CONTRADICTS",
+      "from": "Knowledge",
+      "to": "Knowledge",
+      "properties": {
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>"
+      }
+    },
+    {
+      "type": "IMPLIES",
+      "from": "Knowledge",
+      "to": "Knowledge",
+      "properties": {
+        "certainty": "integer",
+        "created_at": "<temporal>",
+        "updated_at": "<temporal>"
+      }
+    }
+  ]
+}
+
