@@ -122,45 +122,50 @@ curl -X GET "http://localhost:8000/api/admin/schema_status" \
 
 ## Schema Components Created
 
-### 1. Node Constraints (8 total)
+### 1. Node Constraints (10 total)
 ```cypher
 -- Unique primary keys
 CREATE CONSTRAINT character_id_unique FOR (c:Character) REQUIRE c.character_id IS UNIQUE;
 CREATE CONSTRAINT knowledge_id_unique FOR (k:Knowledge) REQUIRE k.knowledge_id IS UNIQUE;
 CREATE CONSTRAINT scene_id_unique FOR (s:Scene) REQUIRE s.scene_id IS UNIQUE;
 CREATE CONSTRAINT location_id_unique FOR (l:Location) REQUIRE l.location_id IS UNIQUE;
+CREATE CONSTRAINT item_id_unique FOR (i:Item) REQUIRE i.item_id IS UNIQUE;
 
 -- Composite unique constraints for data isolation
 CREATE CONSTRAINT character_name_per_story FOR (c:Character) REQUIRE (c.name, c.story_id, c.user_id) IS UNIQUE;
 CREATE CONSTRAINT location_name_per_story FOR (l:Location) REQUIRE (l.name, l.story_id, l.user_id) IS UNIQUE;
 CREATE CONSTRAINT scene_order_per_story FOR (s:Scene) REQUIRE (s.scene_order, s.story_id, s.user_id) IS UNIQUE;
+CREATE CONSTRAINT item_name_per_story FOR (i:Item) REQUIRE (i.name, i.story_id, i.user_id) IS UNIQUE;
 
 -- Required content
 CREATE CONSTRAINT knowledge_content_required FOR (k:Knowledge) REQUIRE k.content IS NOT NULL;
 ```
 
-### 2. Data Isolation Indexes (16 total)
+### 2. Data Isolation Indexes (20 total)
 ```cypher
 -- Story ID indexes
 CREATE INDEX story_id_character FOR (c:Character) ON (c.story_id);
 CREATE INDEX story_id_knowledge FOR (k:Knowledge) ON (k.story_id);
 CREATE INDEX story_id_scene FOR (s:Scene) ON (s.story_id);
 CREATE INDEX story_id_location FOR (l:Location) ON (l.story_id);
+CREATE INDEX story_id_item FOR (i:Item) ON (i.story_id);
 
 -- User ID indexes  
 CREATE INDEX user_id_character FOR (c:Character) ON (c.user_id);
 CREATE INDEX user_id_knowledge FOR (k:Knowledge) ON (k.user_id);
 CREATE INDEX user_id_scene FOR (s:Scene) ON (s.user_id);
 CREATE INDEX user_id_location FOR (l:Location) ON (l.user_id);
+CREATE INDEX user_id_item FOR (i:Item) ON (i.user_id);
 
 -- Combined story+user indexes
 CREATE INDEX story_user_character FOR (c:Character) ON (c.story_id, c.user_id);
-CREATE INDEX story_user_knowledge FOR (k:Knowledge) ON (k.story_id, c.user_id);
+CREATE INDEX story_user_knowledge FOR (k:Knowledge) ON (k.story_id, k.user_id);
 CREATE INDEX story_user_scene FOR (s:Scene) ON (s.story_id, s.user_id);
 CREATE INDEX story_user_location FOR (l:Location) ON (l.story_id, l.user_id);
+CREATE INDEX story_user_item FOR (i:Item) ON (i.story_id, i.user_id);
 ```
 
-### 3. Temporal Indexes (16 total)
+### 3. Temporal Indexes (20 total)
 Support for bi-temporal queries on all entities:
 ```cypher
 -- Valid time indexes
@@ -172,9 +177,11 @@ CREATE INDEX temporal_valid_to_knowledge FOR (k:Knowledge) ON (k.valid_to);
 -- Transaction time indexes
 CREATE INDEX temporal_created_at_character FOR (c:Character) ON (c.created_at);
 CREATE INDEX temporal_updated_at_character FOR (c:Character) ON (c.updated_at);
+CREATE INDEX temporal_created_at_item FOR (i:Item) ON (i.created_at);
+CREATE INDEX temporal_updated_at_item FOR (i:Item) ON (i.updated_at);
 ```
 
-### 4. Enum Property Indexes (8 total)
+### 4. Enum Property Indexes (10 total)
 ```cypher
 -- Knowledge enums
 CREATE INDEX knowledge_type_index FOR (k:Knowledge) ON (k.knowledge_type);
@@ -184,15 +191,24 @@ CREATE INDEX verification_status_index FOR (k:Knowledge) ON (k.verification_stat
 -- Location enums
 CREATE INDEX location_type_index FOR (l:Location) ON (l.location_type);
 CREATE INDEX accessibility_index FOR (l:Location) ON (l.accessibility);
+
+-- Item enums
+CREATE INDEX item_type_index FOR (i:Item) ON (i.item_type);
+CREATE INDEX item_is_active_index FOR (i:Item) ON (i.is_active);
 ```
 
-### 5. Relationship Indexes (25+ total)
+### 5. Relationship Indexes (30+ total)
 Comprehensive indexing for all relationship properties:
 ```cypher
 -- KNOWS relationship
 CREATE INDEX knows_learned_at FOR ()-[r:KNOWS]-() ON (r.learned_at);
 CREATE INDEX knows_confidence_level FOR ()-[r:KNOWS]-() ON (r.confidence_level);
 CREATE INDEX knows_sharing_restrictions FOR ()-[r:KNOWS]-() ON (r.sharing_restrictions);
+
+-- OWNS relationship
+CREATE INDEX owns_start_time FOR ()-[r:OWNS]-() ON (r.ownership_start);
+CREATE INDEX owns_end_time FOR ()-[r:OWNS]-() ON (r.ownership_end);
+CREATE INDEX owns_transfer_method FOR ()-[r:OWNS]-() ON (r.transfer_method);
 
 -- RELATIONSHIP relationship
 CREATE INDEX relationship_type_index FOR ()-[r:RELATIONSHIP]-() ON (r.relationship_type);

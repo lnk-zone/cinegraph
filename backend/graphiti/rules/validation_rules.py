@@ -29,6 +29,7 @@ class ValidationRules:
             'prevent_invalid_knows_edges': self._prevent_invalid_knows_edges,
             'prevent_relationship_self_loops': self._prevent_relationship_self_loops,
             'validate_temporal_consistency': self._validate_temporal_consistency,
+            'validate_ownership_temporal_logic': self._validate_ownership_temporal_logic,
             'validate_scene_order': self._validate_scene_order
         }
     
@@ -55,6 +56,28 @@ class ValidationRules:
             except Exception as e:
                 return False, f"Rule '{rule_name}' encountered error: {str(e)}"
         
+        return True, ""
+
+    async def _validate_ownership_temporal_logic(self, edge_type: str, from_node: Dict[str, Any], 
+                                               to_node: Dict[str, Any], properties: Dict[str, Any]) -> Tuple[bool, str]:
+        """
+        Validate that ownership_start <= ownership_end if both are provided.
+        """
+        if edge_type != "OWNS":
+            return True, ""
+        
+        ownership_start = properties.get('ownership_start')
+        ownership_end = properties.get('ownership_end')
+
+        if ownership_start and ownership_end:
+            if isinstance(ownership_start, str):
+                ownership_start = datetime.fromisoformat(ownership_start)
+            if isinstance(ownership_end, str):
+                ownership_end = datetime.fromisoformat(ownership_end)
+
+            if ownership_start > ownership_end:
+                return False, "ownership_start cannot be after ownership_end"
+
         return True, ""
     
     async def _prevent_invalid_knows_edges(self, edge_type: str, from_node: Dict[str, Any], 

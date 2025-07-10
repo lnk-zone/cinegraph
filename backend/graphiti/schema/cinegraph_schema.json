@@ -16,7 +16,9 @@
     "contradiction_type": ["factual", "temporal", "logical", "character_behavior"],
     "severity": ["critical", "major", "minor", "potential"],
     "resolution_status": ["unresolved", "resolved", "false_positive", "ignored"],
-    "implication_strength": ["certain", "probable", "possible", "weak"]
+    "implication_strength": ["certain", "probable", "possible", "weak"],
+    "item_type": ["weapon", "tool", "clothing", "artifact", "symbol"],
+    "transfer_method": ["gift", "exchange", "theft", "inheritance"]
   },
   "entities": [
     {
@@ -90,6 +92,23 @@
         "accessibility": {"type": "enum", "values": ["public", "private", "restricted", "secret"]},
         "first_mentioned": {"type": "timestamp"},
         "is_active": {"type": "boolean", "default": true},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    }
+  ,
+    {
+      "name": "Item",
+      "description": "Represents items that characters can possess",
+      "properties": {
+        "item_id": {"type": "string", "unique": true, "required": true},
+        "name": {"type": "string", "required": true, "unique_within_project": true},
+        "description": {"type": "string"},
+        "item_type": {"type": "enum", "values": ["weapon", "tool", "clothing", "artifact"]},
         "story_id": {"type": "string", "required": true},
         "user_id": {"type": "string", "required": true},
         "valid_from": {"type": "timestamp", "temporal": true},
@@ -209,6 +228,24 @@
         "updated_at": {"type": "timestamp", "temporal": true}
       }
     }
+  ,
+    {
+      "type": "OWNS",
+      "description": "Connects characters to items they own",
+      "from": "Character",
+      "to": "Item",
+      "properties": {
+        "ownership_start": {"type": "timestamp", "required": true},
+        "ownership_end": {"type": "timestamp"},
+        "transfer_method": {"type": "enum", "values": ["gift", "exchange", "theft", "inheritance"]},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    }
   ],
   "validation_rules": {
     "entity_validation": [
@@ -216,18 +253,24 @@
       "Knowledge content cannot be empty or null",
       "Scene order must be sequential and unique",
       "Location names must be unique within a project"
+    ,
+      "Item names must be unique within a project"
     ],
     "relationship_validation": [
       "KNOWS relationships require valid character_id and knowledge_id",
       "RELATIONSHIP relationships cannot connect a character to themselves",
       "PRESENT_IN relationships require valid character_id and scene_id",
       "Temporal properties must be logically consistent (valid_from <= valid_to)"
+    ,
+      "OWNS relationships require valid character_id and item_id; ownership_start <= ownership_end"
     ],
     "consistency_rules": [
       "Characters cannot know information before it exists in the story timeline",
       "Characters cannot be present in scenes that occur before their first appearance",
       "Contradictory knowledge items must be flagged for resolution",
       "Relationship changes must be temporally consistent"
+    ,
+      "Characters cannot own an item before it is introduced in the timeline"
     ]
   }
 }

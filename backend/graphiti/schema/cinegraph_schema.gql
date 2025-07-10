@@ -39,6 +39,19 @@ type Location {
   updated_at: DateTime @temporal
 }
 
+type Item {
+  item_id: String! @unique
+  name: String!
+  description: String
+  item_type: String
+  origin_scene: String
+  location_found: String
+  current_owner: String
+  is_active: Boolean
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
 # ===============================
 # RELATIONSHIPS
 # ===============================
@@ -72,6 +85,16 @@ type CONTRADICTS @relationship(from: Knowledge, to: Knowledge) {
 
 type IMPLIES @relationship(from: Knowledge, to: Knowledge) {
   certainty: Int
+  created_at: DateTime @temporal
+  updated_at: DateTime @temporal
+}
+
+type OWNS @relationship(from: Character, to: Item) {
+  ownership_start: DateTime! @temporal
+  ownership_end: DateTime @temporal
+  obtained_from: String
+  transfer_method: String
+  ownership_notes: String
   created_at: DateTime @temporal
   updated_at: DateTime @temporal
 }

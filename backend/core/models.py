@@ -1,3 +1,4 @@
+
 """
 Core Models for CineGraph Application
 ====================================
@@ -10,6 +11,48 @@ from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 from pydantic import BaseModel, Field
 from enum import Enum
+
+class ItemType(str, Enum):
+    """Types of items in the knowledge graph."""
+    WEAPON = "weapon"
+    TOOL = "tool"
+    CLOTHING = "clothing"
+    ARTIFACT = "artifact"
+
+class TransferMethod(str, Enum):
+    """Methods of item transfer in the knowledge graph."""
+    GIFT = "gift"
+    EXCHANGE = "exchange"
+    THEFT = "theft"
+    INHERITANCE = "inheritance"
+
+class ItemEntity(BaseModel):
+    """Represents an item entity in the knowledge graph."""
+    
+    id: str = Field(..., description="Unique identifier for the item")
+    type: ItemType = Field(..., description="Type of the item")
+    name: str = Field(..., description="Name of the item")
+    description: Optional[str] = Field(default=None, description="Description of the item")
+    origin_scene: Optional[str] = Field(default=None, description="Scene where the item first appears")
+    location_found: Optional[str] = Field(default=None, description="Location where the item is found")
+    current_owner: Optional[str] = Field(default=None, description="Current owner of the item")
+    is_active: bool = Field(default=True, description="Whether the item is actively part of the story")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
+
+class Ownership(BaseModel):
+    """Represents an ownership relationship in the knowledge graph."""
+    
+    from_id: str = Field(..., description="Character ID who owns the item")
+    to_id: str = Field(..., description="Item ID that is owned")
+    ownership_start: datetime = Field(..., description="Timestamp when ownership starts")
+    ownership_end: Optional[datetime] = Field(default=None, description="Timestamp when ownership ends")
+    obtained_from: Optional[str] = Field(default=None, description="Who the item was obtained from")
+    transfer_method: TransferMethod = Field(..., description="Method of transfer")
+    ownership_notes: Optional[str] = Field(default=None, description="Additional notes about the ownership")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
+
 
 
 class StoryInput(BaseModel):
@@ -39,14 +82,60 @@ class RelationshipType(str, Enum):
     LOCATED_AT = "LOCATED_AT"
     HAS_ITEM = "HAS_ITEM"
     PARTICIPATES_IN = "PARTICIPATES_IN"
+    OWNS = "OWNS"
+
+
+class ItemType(str, Enum):
+    """Types of items in the knowledge graph."""
+    WEAPON = "weapon"
+    TOOL = "tool"
+    CLOTHING = "clothing"
+    ARTIFACT = "artifact"
+
+
+class TransferMethod(str, Enum):
+    """Methods of item transfer in the knowledge graph."""
+    GIFT = "gift"
+    EXCHANGE = "exchange"
+    THEFT = "theft"
+    INHERITANCE = "inheritance"
+
+
+class ItemEntity(BaseModel):
+    """Represents an item entity in the knowledge graph."""
+    
+    id: str = Field(..., description="Unique identifier for the item")
+    type: ItemType = Field(..., description="Type of the item")
+    name: str = Field(..., description="Name of the item")
+    description: Optional[str] = Field(default=None, description="Description of the item")
+    origin_scene: Optional[str] = Field(default=None, description="Scene where the item first appears")
+    location_found: Optional[str] = Field(default=None, description="Location where the item is found")
+    current_owner: Optional[str] = Field(default=None, description="Current owner of the item")
+    is_active: bool = Field(default=True, description="Whether the item is actively part of the story")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
+
+
+class Ownership(BaseModel):
+    """Represents an ownership relationship in the knowledge graph."""
+    
+    from_id: str = Field(..., description="Character ID who owns the item")
+    to_id: str = Field(..., description="Item ID that is owned")
+    ownership_start: datetime = Field(..., description="Timestamp when ownership starts")
+    ownership_end: Optional[datetime] = Field(default=None, description="Timestamp when ownership ends")
+    obtained_from: Optional[str] = Field(default=None, description="Who the item was obtained from")
+    transfer_method: TransferMethod = Field(..., description="Method of transfer")
+    ownership_notes: Optional[str] = Field(default=None, description="Additional notes about the ownership")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
 
 class GraphEntity(BaseModel):
     """Represents an entity in the knowledge graph."""
     
-    id: str = Field(..., description="Unique identifier for the entity")
+    id: str = Field(..., description="Entity identifier")
     type: EntityType = Field(..., description="Type of the entity")
-    name: str = Field(..., description="Name or title of the entity")
+    name: str = Field(..., description="Entity name")
     properties: Dict[str, Any] = Field(default_factory=dict, description="Entity properties")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")

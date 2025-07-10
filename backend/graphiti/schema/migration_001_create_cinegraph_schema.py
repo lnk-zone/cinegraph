@@ -15,6 +15,10 @@ import os
 import sys
 import asyncio
 from typing import Dict, Any
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Add the parent directory to the path to import graphiti
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -108,8 +112,21 @@ class CineGraphSchemaMigration:
             }
         }
         
+        # Item entity
+        item_schema = {
+            "name": "Item",
+            "properties": {
+                "item_id": {"type": "string", "unique": True, "required": True},
+                "name": {"type": "string", "unique": True, "required": True},
+                "item_type": {"type": "string", "required": True},
+                "description": {"type": "string"},
+                "created_at": {"type": "datetime", "temporal": True},
+                "updated_at": {"type": "datetime", "temporal": True}
+            }
+        }
+        
         # Create entities
-        entities = [character_schema, knowledge_schema, scene_schema, location_schema]
+        entities = [character_schema, knowledge_schema, scene_schema, location_schema, item_schema]
         for entity in entities:
             await self.graphiti.create_entity_type(entity)
             print(f"Created entity: {entity['name']}")
@@ -186,10 +203,23 @@ class CineGraphSchemaMigration:
             }
         }
         
+        # OWNS (Character -> Item)
+        owns_schema = {
+            "type": "OWNS",
+            "from": "Character",
+            "to": "Item",
+            "properties": {
+                "acquired_at": {"type": "datetime", "temporal": True},
+                "lost_at": {"type": "datetime", "temporal": True},
+                "created_at": {"type": "datetime", "temporal": True},
+                "updated_at": {"type": "datetime", "temporal": True}
+            }
+        }
+        
         # Create relationships
         relationships = [
             knows_schema, relationship_schema, present_in_schema,
-            occurs_in_schema, contradicts_schema, implies_schema
+            occurs_in_schema, contradicts_schema, implies_schema, owns_schema
         ]
         
         for rel in relationships:
@@ -214,18 +244,22 @@ class CineGraphSchemaMigration:
         await self.graphiti.create_constraint("Location", "location_id", "UNIQUE")
         await self.graphiti.create_constraint("Location", "name", "UNIQUE")
         
+        # Item constraints
+        await self.graphiti.create_constraint("Item", "item_id", "UNIQUE")
+        await self.graphiti.create_constraint("Item", "name", "UNIQUE")
+        
         print("Created all constraints and indexes")
     
     async def _drop_relationships(self):
         """Drop all relationships"""
-        relationships = ["KNOWS", "RELATIONSHIP", "PRESENT_IN", "OCCURS_IN", "CONTRADICTS", "IMPLIES"]
+        relationships = ["KNOWS", "RELATIONSHIP", "PRESENT_IN", "OCCURS_IN", "CONTRADICTS", "IMPLIES", "OWNS"]
         for rel in relationships:
             await self.graphiti.drop_relationship_type(rel)
             print(f"Dropped relationship: {rel}")
     
     async def _drop_entities(self):
         """Drop all entities"""
-        entities = ["Character", "Knowledge", "Scene", "Location"]
+        entities = ["Character", "Knowledge", "Scene", "Location", "Item"]
         for entity in entities:
             await self.graphiti.drop_entity_type(entity)
             print(f"Dropped entity: {entity}")
@@ -234,8 +268,16 @@ class CineGraphSchemaMigration:
 async def main():
     """Main migration function"""
     
+    # Get connection parameters from environment
+    uri = os.getenv('GRAPHITI_DATABASE_URL')
+    user = os.getenv('GRAPHITI_DATABASE_USER')
+    password = os.getenv('GRAPHITI_DATABASE_PASSWORD')
+    
+    if not all([uri, user, password]):
+        raise ValueError("Missing required environment variables: GRAPHITI_DATABASE_URL, GRAPHITI_DATABASE_USER, GRAPHITI_DATABASE_PASSWORD")
+    
     # Initialize Graphiti instance
-    graphiti = Graphiti()
+    graphiti = Graphiti(uri, user, password)
     await graphiti.initialize()
     
     # Create migration instance

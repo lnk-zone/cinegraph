@@ -45,6 +45,7 @@ class CineGraphAgent:
         self.schema_context = self._load_schema_context()
         self.query_cache = {}  # Cache for frequently used queries
         self.query_templates = self._build_query_templates()
+        # TODO: Update current_owner field on ItemEntity when new OWNS relationships are created or ended.
         self.dangerous_operations = {'DELETE', 'DROP', 'CREATE', 'MERGE', 'SET', 'REMOVE', 'DETACH'}
         
         self.system_prompt = self._build_enhanced_system_prompt()

@@ -12,6 +12,7 @@ CineGraph is an AI-powered story consistency tool designed for RPG Maker creator
 - **Rate Limiting**: Redis-based token bucket rate limiting
 - **WebSocket Alerts**: Real-time alerts for story contradictions
 - **Temporal Reasoning**: Track character knowledge over time
+- **Item Ownership Tracking**: Complete ownership history with temporal tracking and transfer methods
 - **Multi-user Support**: User isolation and data protection
 
 ## Environment Variables
@@ -204,7 +205,27 @@ curl -X DELETE "http://localhost:8000/api/story/example-story-001" \
   -H "Authorization: Bearer $JWT_TOKEN"
 ```
 
-### 9. WebSocket Connection (JavaScript Example)
+### 9. Query Item Ownership History
+```bash
+curl -X POST "http://localhost:8000/api/story/example-story-001/query" \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "Show me the complete ownership history of Excalibur"
+  }'
+```
+
+### 10. Query Character's Current Items
+```bash
+curl -X POST "http://localhost:8000/api/story/example-story-001/query" \
+  -H "Authorization: Bearer $JWT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What items does Arthur currently own?"
+  }'
+```
+
+### 11. WebSocket Connection (JavaScript Example)
 ```javascript
 const token = "YOUR_JWT_TOKEN";
 const ws = new WebSocket(`ws://localhost:8000/api/alerts/stream?token=${token}`);
@@ -259,6 +280,151 @@ python verify_alerts_migration.py
 
 Migration files are stored in `supabase/migrations/` with timestamps:
 - `202507091910_auth_rls.sql` - Authentication and Row Level Security setup
+
+## Knowledge Graph Schema
+
+### Entities
+
+CineGraph uses a comprehensive knowledge graph schema with five main entity types:
+
+#### Character
+- `character_id` (String, unique): Unique identifier
+- `name` (String, unique): Character name
+- `description` (String): Character description
+- `created_at`, `updated_at`, `deleted_at` (DateTime): Temporal fields
+
+#### Knowledge
+- `knowledge_id` (String, unique): Unique identifier
+- `content` (String): Knowledge content
+- `valid_from`, `valid_to` (DateTime): Temporal validity period
+- `created_at`, `updated_at` (DateTime): Temporal fields
+
+#### Scene
+- `scene_id` (String, unique): Unique identifier
+- `name` (String): Scene name
+- `scene_order` (Int, sequential): Order in story sequence
+- `created_at`, `updated_at` (DateTime): Temporal fields
+
+#### Location
+- `location_id` (String, unique): Unique identifier
+- `name` (String, unique): Location name
+- `details` (String): Location description
+- `created_at`, `updated_at` (DateTime): Temporal fields
+
+#### Item
+- `item_id` (String, unique): Unique identifier
+- `name` (String): Item name
+- `description` (String): Item description
+- `item_type` (Enum): weapon, tool, clothing, artifact
+- `origin_scene` (String): Scene where item first appears
+- `location_found` (String): Location where item was found
+- `current_owner` (String): Current owner character ID
+- `is_active` (Boolean): Whether item is actively in the story
+- `created_at`, `updated_at` (DateTime): Temporal fields
+
+### Relationships
+
+#### OWNS (Character → Item)
+Tracks complete ownership history with temporal support:
+- `ownership_start` (DateTime, required): When ownership begins
+- `ownership_end` (DateTime, optional): When ownership ends
+- `obtained_from` (String, optional): Previous owner ID
+- `transfer_method` (Enum): gift, exchange, theft, inheritance
+- `ownership_notes` (String, optional): Additional context
+- `created_at`, `updated_at` (DateTime): Temporal fields
+
+#### Other Relationships
+- `KNOWS` (Character → Character): Character knowledge relationships
+- `RELATIONSHIP` (Character → Character): Character relationships
+- `PRESENT_IN` (Character → Scene): Character scene appearances
+- `OCCURS_IN` (Scene → Location): Scene location mapping
+- `CONTRADICTS` (Knowledge → Knowledge): Knowledge contradictions
+- `IMPLIES` (Knowledge → Knowledge): Knowledge implications
+
+### Sample Cypher Queries
+
+#### Query Ownership History
+```cypher
+// Get complete ownership history for an item
+MATCH (c:Character)-[owns:OWNS]->(i:Item {name: 'Excalibur'})
+WHERE owns.story_id = $story_id
+RETURN c.name as owner, 
+       owns.ownership_start as acquired,
+       owns.ownership_end as lost,
+       owns.transfer_method as how_obtained,
+       owns.obtained_from as previous_owner
+ORDER BY owns.ownership_start ASC
+```
+
+#### Query Current Item Owners
+```cypher
+// Find all items currently owned by a character
+MATCH (c:Character {name: 'Arthur'})-[owns:OWNS]->(i:Item)
+WHERE owns.story_id = $story_id 
+  AND owns.ownership_end IS NULL
+RETURN i.name as item, 
+       i.item_type as type,
+       owns.ownership_start as acquired,
+       owns.transfer_method as how_obtained
+ORDER BY owns.ownership_start DESC
+```
+
+#### Query Item Transfer Chain
+```cypher
+// Trace the complete transfer chain of an item
+MATCH (i:Item {name: 'Magic Ring'})<-[owns:OWNS]-(c:Character)
+WHERE owns.story_id = $story_id
+OPTIONAL MATCH (prev:Character {character_id: owns.obtained_from})
+RETURN c.name as current_owner,
+       prev.name as previous_owner,
+       owns.transfer_method as transfer_method,
+       owns.ownership_start as transfer_date,
+       owns.ownership_notes as notes
+ORDER BY owns.ownership_start ASC
+```
+
+### Sample GraphQL Queries
+
+#### Get Item Ownership History
+```graphql
+query ItemOwnershipHistory($itemName: String!, $storyId: String!) {
+  items(where: { name: $itemName, story_id: $storyId }) {
+    name
+    description
+    item_type
+    ownedBy {
+      character {
+        name
+        character_id
+      }
+      ownership_start
+      ownership_end
+      transfer_method
+      obtained_from
+      ownership_notes
+    }
+  }
+}
+```
+
+#### Get Character's Current Items
+```graphql
+query CharacterItems($characterName: String!, $storyId: String!) {
+  characters(where: { name: $characterName, story_id: $storyId }) {
+    name
+    owns(where: { ownership_end: null }) {
+      item {
+        name
+        description
+        item_type
+      }
+      ownership_start
+      transfer_method
+      obtained_from
+    }
+  }
+}
+```
 
 ## Architecture Overview
 
