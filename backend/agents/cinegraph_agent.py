@@ -2920,25 +2920,192 @@ class CineGraphAgent:
         return {"network_type": "character_centric", "central_character": central_character, "degrees": degrees, "nodes": [], "edges": []}
     
     async def _calculate_centrality(self, network_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate centrality metrics for network nodes."""
-        return {"betweenness_centrality": {}, "degree_centrality": {}, "closeness_centrality": {}}
+        """Calculate centrality metrics for network nodes using Neo4j GDS."""
+        if not self.graphiti_manager:
+            return {}
+
+        story_id = network_data.get("story_id")
+        user_id = network_data.get("user_id")
+        try:
+            centrality_result = await self.graphiti_manager.compute_centrality(story_id, user_id)
+            metrics = centrality_result.get("centrality_metrics", {}) if centrality_result.get("status") == "success" else {}
+
+            closeness_query = f"""
+            CALL gds.graph.project.cypher(
+                'closeness-{story_id}',
+                'MATCH (n:Character) WHERE n.story_id = "{story_id}" AND n.user_id = "{user_id}" RETURN id(n) AS id',
+                'MATCH (a:Character)-[r:FRIENDS_WITH|KNOWS|ACQUAINTED_WITH]->(b:Character)\n                 WHERE a.story_id = "{story_id}" AND a.user_id = "{user_id}"\n                 RETURN id(a) AS source, id(b) AS target, r.sna_weight AS weight'
+            )
+            YIELD graphName
+            CALL gds.closeness.stream('closeness-{story_id}')
+            YIELD nodeId, score
+            MATCH (n) WHERE id(n) = nodeId
+            RETURN n.name AS character, score AS closeness_centrality
+            ORDER BY score DESC
+            """
+
+            closeness_results = await self.graphiti_manager._run_cypher_query(closeness_query)
+            cleanup_query = f"CALL gds.graph.drop('closeness-{story_id}') YIELD graphName"
+            await self.graphiti_manager._run_cypher_query(cleanup_query)
+
+            return {
+                "degree_centrality": metrics.get("degree_centrality", []),
+                "betweenness_centrality": metrics.get("betweenness_centrality", []),
+                "closeness_centrality": closeness_results,
+            }
+        except Exception as e:
+            return {"error": str(e)}
     
     async def _calculate_clustering(self, network_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate clustering coefficient for the network."""
-        return {"global_clustering": 0.0, "local_clustering": {}}
+        """Calculate clustering coefficients using Neo4j GDS triangle count."""
+        if not self.graphiti_manager:
+            return {}
+
+        story_id = network_data.get("story_id")
+        user_id = network_data.get("user_id")
+
+        try:
+            local_query = f"""
+            CALL gds.graph.project.cypher(
+                'cluster-{story_id}',
+                'MATCH (n:Character) WHERE n.story_id = "{story_id}" AND n.user_id = "{user_id}" RETURN id(n) AS id',
+                'MATCH (a:Character)-[r:FRIENDS_WITH|KNOWS|ACQUAINTED_WITH]->(b:Character)\n                 WHERE a.story_id = "{story_id}" AND a.user_id = "{user_id}"\n                 RETURN id(a) AS source, id(b) AS target, r.sna_weight AS weight'
+            )
+            YIELD graphName
+            CALL gds.triangleCount.stream('cluster-{story_id}')
+            YIELD nodeId, clusteringCoefficient
+            MATCH (n) WHERE id(n) = nodeId
+            RETURN n.name AS character, clusteringCoefficient
+            ORDER BY clusteringCoefficient DESC
+            """
+
+            stats_query = f"CALL gds.triangleCount.stats('cluster-{story_id}') YIELD globalClusteringCoefficient RETURN globalClusteringCoefficient"
+
+            local_results = await self.graphiti_manager._run_cypher_query(local_query)
+            stats_result = await self.graphiti_manager._run_cypher_query(stats_query)
+            cleanup_query = f"CALL gds.graph.drop('cluster-{story_id}') YIELD graphName"
+            await self.graphiti_manager._run_cypher_query(cleanup_query)
+
+            return {
+                "global_clustering": stats_result[0].get("globalClusteringCoefficient", 0.0) if stats_result else 0.0,
+                "local_clustering": {r["character"]: r["clusteringCoefficient"] for r in local_results},
+            }
+        except Exception as e:
+            return {"error": str(e)}
     
     async def _detect_communities(self, network_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Detect communities in the character network."""
-        return {"communities": [], "modularity": 0.0}
+        """Detect communities in the character network using GDS Louvain."""
+        if not self.graphiti_manager:
+            return {}
+
+        story_id = network_data.get("story_id")
+        user_id = network_data.get("user_id")
+
+        try:
+            result = await self.graphiti_manager.detect_communities(story_id, user_id)
+            return result.get("community_detection", {}) if result.get("status") == "success" else {"error": result.get("error")}
+        except Exception as e:
+            return {"error": str(e)}
     
     async def _analyze_influence_paths(self, network_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze influence paths between characters."""
-        return {"influence_paths": [], "key_influencers": []}
+        """Analyze influence paths and key influencers using GDS algorithms."""
+        if not self.graphiti_manager:
+            return {}
+
+        story_id = network_data.get("story_id")
+        user_id = network_data.get("user_id")
+
+        try:
+            path_query = f"""
+            CALL gds.graph.project.cypher(
+                'influence-{story_id}',
+                'MATCH (n:Character) WHERE n.story_id = "{story_id}" AND n.user_id = "{user_id}" RETURN id(n) AS id',
+                'MATCH (a:Character)-[r:FRIENDS_WITH|KNOWS|ACQUAINTED_WITH]->(b:Character)\n                 WHERE a.story_id = "{story_id}" AND a.user_id = "{user_id}"\n                 RETURN id(a) AS source, id(b) AS target, r.sna_weight AS weight'
+            )
+            YIELD graphName
+            CALL gds.allShortestPaths.dijkstra.stream('influence-{story_id}')
+            YIELD sourceNodeId, targetNodeId, distance
+            WITH gds.util.asNode(sourceNodeId) AS src, gds.util.asNode(targetNodeId) AS dst, distance
+            RETURN src.name AS from, dst.name AS to, distance
+            ORDER BY distance ASC
+            LIMIT 20
+            """
+
+            influencer_query = f"""
+            CALL gds.pageRank.stream('influence-{story_id}')
+            YIELD nodeId, score
+            MATCH (n) WHERE id(n) = nodeId
+            RETURN n.name AS character, score
+            ORDER BY score DESC
+            LIMIT 5
+            """
+
+            paths = await self.graphiti_manager._run_cypher_query(path_query)
+            influencers = await self.graphiti_manager._run_cypher_query(influencer_query)
+            cleanup_query = f"CALL gds.graph.drop('influence-{story_id}') YIELD graphName"
+            await self.graphiti_manager._run_cypher_query(cleanup_query)
+
+            return {"influence_paths": paths, "key_influencers": influencers}
+        except Exception as e:
+            return {"error": str(e)}
     
     async def _calculate_network_density(self, network_data: Dict[str, Any]) -> float:
-        """Calculate network density."""
-        return 0.0
+        """Calculate overall network density using Neo4j GDS."""
+        if not self.graphiti_manager:
+            return 0.0
+
+        story_id = network_data.get("story_id")
+        user_id = network_data.get("user_id")
+
+        try:
+            density_query = f"""
+            CALL gds.graph.project.cypher(
+                'density-{story_id}',
+                'MATCH (n:Character) WHERE n.story_id = "{story_id}" AND n.user_id = "{user_id}" RETURN id(n) AS id',
+                'MATCH (a:Character)-[r:FRIENDS_WITH|KNOWS|ACQUAINTED_WITH]-(b:Character)\n                 WHERE a.story_id = "{story_id}" AND a.user_id = "{user_id}"\n                 RETURN id(a) AS source, id(b) AS target'
+            )
+            YIELD graphName
+            CALL gds.graph.density('density-{story_id}')
+            YIELD density
+            RETURN density
+            """
+
+            result = await self.graphiti_manager._run_cypher_query(density_query)
+            cleanup_query = f"CALL gds.graph.drop('density-{story_id}') YIELD graphName"
+            await self.graphiti_manager._run_cypher_query(cleanup_query)
+
+            return result[0].get("density", 0.0) if result else 0.0
+        except Exception:
+            return 0.0
     
     async def _identify_bridge_characters(self, network_data: Dict[str, Any]) -> List[str]:
-        """Identify characters that act as bridges between communities."""
-        return []
+        """Identify bridge characters using betweenness centrality."""
+        if not self.graphiti_manager:
+            return []
+
+        story_id = network_data.get("story_id")
+        user_id = network_data.get("user_id")
+
+        try:
+            bridge_query = f"""
+            CALL gds.graph.project.cypher(
+                'bridge-{story_id}',
+                'MATCH (n:Character) WHERE n.story_id = "{story_id}" AND n.user_id = "{user_id}" RETURN id(n) AS id',
+                'MATCH (a:Character)-[r:FRIENDS_WITH|KNOWS|ACQUAINTED_WITH]-(b:Character)\n                 WHERE a.story_id = "{story_id}" AND a.user_id = "{user_id}"\n                 RETURN id(a) AS source, id(b) AS target'
+            )
+            YIELD graphName
+            CALL gds.betweenness.stream('bridge-{story_id}')
+            YIELD nodeId, score
+            MATCH (n) WHERE id(n) = nodeId
+            RETURN n.name AS character
+            ORDER BY score DESC
+            LIMIT 10
+            """
+
+            result = await self.graphiti_manager._run_cypher_query(bridge_query)
+            cleanup_query = f"CALL gds.graph.drop('bridge-{story_id}') YIELD graphName"
+            await self.graphiti_manager._run_cypher_query(cleanup_query)
+
+            return [r["character"] for r in result]
+        except Exception:
+            return []
