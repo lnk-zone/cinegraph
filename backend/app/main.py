@@ -14,7 +14,10 @@ from pathlib import Path
 from core.graphiti_manager import GraphitiManager
 from agents.cinegraph_agent import CineGraphAgent
 from core.story_processor import StoryProcessor
-from core.models import StoryInput, InconsistencyReport, CharacterKnowledge, ContradictionDetectionResult, UserProfile, UserProfileUpdate
+from core.models import (
+    StoryInput, InconsistencyReport, CharacterKnowledge, ContradictionDetectionResult, 
+    UserProfile, UserProfileUpdate, EpisodeEntity, EpisodeHierarchy, RelationshipEvolution
+)
 from core.redis_alerts import alert_manager
 from tasks.temporal_contradiction_detection import scan_story_contradictions
 from celery_config import REDIS_HOST, REDIS_PORT, REDIS_DB, ALERTS_CHANNEL
@@ -141,6 +144,24 @@ async def validate_story_consistency(story_id: str, current_user: User = Depends
             "status": "success",
             "validation_report": validation_report
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/story/{story_id}/hierarchy")
+async def update_episode_hierarchy(story_id: str, episodes: List[EpisodeHierarchy], current_user: User = Depends(get_rate_limited_user)):
+    """Update the hierarchy of episodes for the given story"""
+    try:
+        result = await graphiti_manager.add_episode_hierarchy(story_id, episodes)
+        return {"status": "success", "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/story/{story_id}/relationship_evolution")
+async def log_relationship_evolution(story_id: str, evolutions: List[RelationshipEvolution], current_user: User = Depends(get_rate_limited_user)):
+    """Log relationship evolution events for the given story"""
+    try:
+        result = await graphiti_manager.track_relationship_evolution(evolutions, story_id)
+        return {"status": "success", "result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

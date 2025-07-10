@@ -1,3 +1,5 @@
+import redis
+
 """
 GraphitiManager - Async Wrapper for Graphiti Core
 =================================================
@@ -18,17 +20,353 @@ from graphiti_core.edges import EntityEdge
 
 from .models import (
     StoryGraph, CharacterKnowledge, GraphEntity, GraphRelationship,
-    EntityType, RelationshipType, GraphitiConfig, TemporalQuery
+    EntityType, RelationshipType, GraphitiConfig, TemporalQuery,
+    EpisodeEntity, EpisodeHierarchy, RelationshipEvolution, ContinuityEdge
 )
 
 
 class GraphitiManager:
     """
     Async wrapper for Graphiti Core client with story-specific functionality.
-    
     Provides high-level methods for story management, temporal queries,
     and knowledge graph operations with proper error handling and connection management.
     """
+    
+    async def create_episode_hierarchy(self, story_id: str, episodes: List[EpisodeHierarchy]) -> Dict[str, Any]:
+        """
+        Add or update the episode hierarchy in the knowledge graph.
+
+        Args:
+            story_id: Unique identifier for the story.
+            episodes: List of EpisodeHierarchy objects.
+
+        Returns:
+            Dict containing operation results.
+        """
+        if not self.client:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        try:
+            results = []
+            for episode in episodes:
+                session_id = self._story_sessions.get(story_id)
+                if not session_id:
+                    session_id = await self.create_story_session(story_id)
+
+                hierarchy_description = f"Episode ID: {episode.episode_id}, Parent: {episode.parent_episode_id}, Children: {episode.child_episodes}"
+                episode_result = await self.client.add_episode(
+                    name=f"Episode Hierarchy: {episode.episode_id}",
+                    episode_body=hierarchy_description,
+                    source_description=f"Episode hierarchy for story {story_id}",
+                    reference_time=datetime.utcnow(),
+                    group_id=session_id
+                )
+                results.append(episode_result)
+
+            return {
+                "status": "success",
+                "story_id": story_id,
+                "episodes_added": len(episodes),
+                "results": results
+            }
+
+        except Exception as e:
+            logging.error(f"Error adding episode hierarchy: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }
+
+    async def link_continuity(self, continuity_edges: List[ContinuityEdge], story_id: str) -> Dict[str, Any]:
+        """
+        Link continuity between episodes or scenes.
+
+        Args:
+            continuity_edges: List of ContinuityEdge objects representing continuity links.
+            story_id: Unique identifier for the story.
+
+        Returns:
+            Dict containing operation results.
+        """
+        try:
+            results = []
+            for edge in continuity_edges:
+                session_id = self._story_sessions.get(story_id)
+                if not session_id:
+                    session_id = await self.create_story_session(story_id)
+
+                edge_description = f"From: {edge.from_id}, To: {edge.to_id}, Type: {edge.type}"
+                edge_result = await self.client.add_episode(
+                    name=f"Continuity: {edge.from_id} -> {edge.to_id}",
+                    episode_body=edge_description,
+                    source_description=f"Continuity link for story {story_id}",
+                    reference_time=datetime.utcnow(),
+                    group_id=session_id
+                )
+                results.append(edge_result)
+
+            return {
+                "status": "success",
+                "story_id": story_id,
+                "links_added": len(continuity_edges),
+                "results": results
+            }
+
+        except Exception as e:
+            logging.error(f"Error linking continuity: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }
+
+    async def evolve_relationship(self, evolutions: List[RelationshipEvolution], story_id: str) -> Dict[str, Any]:
+        """
+        Log the evolution of relationships over time.
+
+        Args:
+            evolutions: List of RelationshipEvolution objects.
+            story_id: Unique identifier for the story.
+
+        Returns:
+            Dict containing operation results.
+        """
+        try:
+            results = []
+            for evolution in evolutions:
+                session_id = self._story_sessions.get(story_id)
+                if not session_id:
+                    session_id = await self.create_story_session(story_id)
+
+                evolution_description = f"From: {evolution.from_character_id}, To: {evolution.to_character_id}, Type: {evolution.relationship_type}, Change: {evolution.strength_before} -> {evolution.strength_after}"
+                evolution_result = await self.client.add_episode(
+                    name=f"Relationship Evolution: {evolution.id}",
+                    episode_body=evolution_description,
+                    source_description=f"Relationship evolution for story {story_id}",
+                    reference_time=evolution.timestamp,
+                    group_id=session_id
+                )
+                results.append(evolution_result)
+
+            return {
+                "status": "success",
+                "story_id": story_id,
+                "evolutions_logged": len(evolutions),
+                "results": results
+            }
+
+        except Exception as e:
+            logging.error(f"Error logging relationship evolution: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }
+
+    async def compute_centrality(self, story_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Compute centrality metrics using Neo4j Graph Data Science algorithms.
+
+        Args:
+            story_id: Unique identifier for the story.
+            user_id: User ID for data isolation.
+
+        Returns:
+            Dict containing centrality metrics.
+        """
+        import json
+        try:
+            # Cache key
+            cache_key = f"centrality_{story_id}_{user_id}"
+            cached_result = self.redis_client.get(cache_key)
+            if cached_result:
+                return json.loads(cached_result)
+
+            # Use Neo4j GDS algorithms via Cypher
+            degree_centrality_query = f"""
+            CALL gds.graph.project.cypher(
+                'story-{story_id}',
+                'MATCH (n:Character) WHERE n.story_id = \"{story_id}\" AND n.user_id = \"{user_id}\" RETURN id(n) AS id',
+                'MATCH (a:Character)-[r:FRIENDS_WITH|KNOWS|ACQUAINTED_WITH]->(b:Character) 
+                 WHERE a.story_id = \"{story_id}\" AND a.user_id = \"{user_id}\" 
+                 RETURN id(a) AS source, id(b) AS target, r.sna_weight AS weight'
+            )
+            YIELD graphName
+            CALL gds.degree.stream('story-{story_id}')
+            YIELD nodeId, score
+            MATCH (n) WHERE id(n) = nodeId
+            RETURN n.name AS character, score AS degree_centrality
+            ORDER BY score DESC
+            """
+            
+            betweenness_centrality_query = f"""
+            CALL gds.betweenness.stream('story-{story_id}')
+            YIELD nodeId, score
+            MATCH (n) WHERE id(n) = nodeId
+            RETURN n.name AS character, score AS betweenness_centrality
+            ORDER BY score DESC
+            """
+            
+            pagerank_query = f"""
+            CALL gds.pageRank.stream('story-{story_id}')
+            YIELD nodeId, score
+            MATCH (n) WHERE id(n) = nodeId
+            RETURN n.name AS character, score AS pagerank
+            ORDER BY score DESC
+            """
+            
+            # Execute centrality calculations
+            degree_results = await self._run_cypher_query(degree_centrality_query)
+            betweenness_results = await self._run_cypher_query(betweenness_centrality_query)
+            pagerank_results = await self._run_cypher_query(pagerank_query)
+            
+            # Clean up the projected graph
+            cleanup_query = f"CALL gds.graph.drop('story-{story_id}') YIELD graphName"
+            await self._run_cypher_query(cleanup_query)
+            
+            centrality_result = {
+                "degree_centrality": degree_results,
+                "betweenness_centrality": betweenness_results,
+                "pagerank": pagerank_results,
+                "computed_at": datetime.utcnow().isoformat()
+            }
+
+            # Cache with a TTL of 3600 seconds
+            self.redis_client.setex(cache_key, 3600, json.dumps(centrality_result))
+
+            return {
+                "status": "success",
+                "story_id": story_id,
+                "centrality_metrics": centrality_result
+            }
+
+        except Exception as e:
+            logging.error(f"Error computing centrality: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }
+
+    async def detect_communities(self, story_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Detect communities in the story graph using Neo4j GDS Louvain algorithm.
+
+        Args:
+            story_id: Unique identifier for the story.
+            user_id: User ID for data isolation.
+
+        Returns:
+            Dict containing detected communities.
+        """
+        import json
+        try:
+            # Cache key
+            cache_key = f"communities_{story_id}_{user_id}"
+            cached_result = self.redis_client.get(cache_key)
+            if cached_result:
+                return json.loads(cached_result)
+
+            # Use Neo4j GDS Louvain algorithm for community detection
+            community_query = f"""
+            CALL gds.graph.project.cypher(
+                'community-{story_id}',
+                'MATCH (n:Character) WHERE n.story_id = \"{story_id}\" AND n.user_id = \"{user_id}\" RETURN id(n) AS id',
+                'MATCH (a:Character)-[r:FRIENDS_WITH|KNOWS|ACQUAINTED_WITH]->(b:Character) 
+                 WHERE a.story_id = \"{story_id}\" AND a.user_id = \"{user_id}\" 
+                 RETURN id(a) AS source, id(b) AS target, r.sna_weight AS weight'
+            )
+            YIELD graphName
+            CALL gds.louvain.stream('community-{story_id}')
+            YIELD nodeId, communityId
+            MATCH (n) WHERE id(n) = nodeId
+            RETURN communityId, collect(n.name) AS members
+            ORDER BY communityId
+            """
+            
+            communities_result = await self._run_cypher_query(community_query)
+            
+            # Clean up the projected graph
+            cleanup_query = f"CALL gds.graph.drop('community-{story_id}') YIELD graphName"
+            await self._run_cypher_query(cleanup_query)
+            
+            community_data = {
+                "communities": communities_result,
+                "total_communities": len(communities_result),
+                "computed_at": datetime.utcnow().isoformat()
+            }
+
+            # Cache with a TTL of 3600 seconds
+            self.redis_client.setex(cache_key, 3600, json.dumps(community_data))
+
+            return {
+                "status": "success",
+                "story_id": story_id,
+                "community_detection": community_data
+            }
+
+        except Exception as e:
+            logging.error(f"Error detecting communities: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }
+
+    async def calculate_relationship_tension(self, story_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Calculate relationship tension metrics using structural balance theory.
+
+        Args:
+            story_id: Unique identifier for the story.
+            user_id: User ID for data isolation.
+
+        Returns:
+            Dict containing relationship tension metrics.
+        """
+        import json
+        try:
+            # Cache key
+            cache_key = f"tension_{story_id}_{user_id}"
+            cached_result = self.redis_client.get(cache_key)
+            if cached_result:
+                return json.loads(cached_result)
+
+            # Run tension analysis with placeholder logic
+            tension_query = f"""
+            MATCH (a:Character)-[r:FRIENDS_WITH|KNOWS|ACQUAINTED_WITH]-(b:Character)
+            WHERE a.story_id = '{story_id}' AND a.user_id = '{user_id}'
+            AND (r.strength < 5)
+            RETURN a.name AS character1, b.name AS character2, COUNT(r) AS tension_links, 
+                   SUM(r.strength) AS total_tension, r.story_id AS storyId, r.user_id AS userId
+            ORDER BY total_tension DESC
+            """
+            
+            tension_results = await self._run_cypher_query(tension_query)
+
+            tension_data = {
+                "tensions": tension_results,
+                "total_tensions": len(tension_results),
+                "computed_at": datetime.utcnow().isoformat()
+            }
+
+            # Cache with a TTL of 3600 seconds
+            self.redis_client.setex(cache_key, 3600, json.dumps(tension_data))
+
+            return {
+                "status": "success",
+                "story_id": story_id,
+                "relationship_tension": tension_data
+            }
+
+        except Exception as e:
+            logging.error(f"Error calculating relationship tension: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }
     
     def __init__(self, config: Optional[GraphitiConfig] = None):
         """
@@ -44,7 +382,7 @@ class GraphitiManager:
         self._session_id: Optional[str] = None
         self._story_sessions: Dict[str, str] = {}  # story_id -> session_id mapping
     
-        
+        self.redis_client = redis.StrictRedis(host='localhost', port=6379, db=0, decode_responses=True)
     def _load_config_from_env(self) -> GraphitiConfig:
         """Load configuration from environment variables."""
         # Support both Aura and local Neo4j
@@ -1088,3 +1426,95 @@ class GraphitiManager:
         except Exception as e:
             logging.error("Direct Cypher query failed: %s", str(e))
             raise RuntimeError(f"Cypher query execution failed: {str(e)}")
+
+    async def add_episode_hierarchy(self, story_id: str, episodes: List[EpisodeHierarchy]) -> Dict[str, Any]:
+        """
+        Add or update the episode hierarchy to the knowledge graph.
+
+        Args:
+            story_id: Unique identifier for the story
+            episodes: List of EpisodeHierarchy objects
+
+        Returns:
+            Dict containing operation results
+        """
+        if not self.client:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        try:
+            session_id = self._story_sessions.get(story_id)
+            if not session_id:
+                session_id = await self.create_story_session(story_id)
+
+            results = []
+            for episode in episodes:
+                hierarchy_description = f"Episode ID: {episode.episode_id}, Parent: {episode.parent_episode_id}, Children: {episode.child_episodes}"
+                episode_result = await self.client.add_episode(
+                    name=f"Episode Hierarchy: {episode.episode_id}",
+                    episode_body=hierarchy_description,
+                    source_description=f"Episode hierarchy for story {story_id}",
+                    reference_time=datetime.utcnow(),
+                    group_id=session_id
+                )
+                results.append(episode_result)
+
+            return {
+                "status": "success",
+                "story_id": story_id,
+                "episodes_added": len(episodes),
+                "results": results
+            }
+
+        except Exception as e:
+            logging.error(f"Error adding episode hierarchy: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }
+
+    async def track_relationship_evolution(self, evolutions: List[RelationshipEvolution], story_id: str) -> Dict[str, Any]:
+        """
+        Log the evolution of relationships over time.
+
+        Args:
+            evolutions: List of RelationshipEvolution objects
+            story_id: Unique identifier for the story
+
+        Returns:
+            Dict containing operation results
+        """
+        if not self.client:
+            raise RuntimeError("Client not connected. Call connect() first.")
+
+        try:
+            session_id = self._story_sessions.get(story_id)
+            if not session_id:
+                session_id = await self.create_story_session(story_id)
+
+            results = []
+            for evolution in evolutions:
+                evolution_description = f"From: {evolution.from_character_id}, To: {evolution.to_character_id}, Type: {evolution.relationship_type}, Change: {evolution.strength_before} -> {evolution.strength_after}"
+                evolution_result = await self.client.add_episode(
+                    name=f"Relationship Evolution: {evolution.id}",
+                    episode_body=evolution_description,
+                    source_description=f"Relationship evolution for story {story_id}",
+                    reference_time=evolution.timestamp,
+                    group_id=session_id
+                )
+                results.append(evolution_result)
+
+            return {
+                "status": "success",
+                "story_id": story_id,
+                "evolutions_logged": len(evolutions),
+                "results": results
+            }
+
+        except Exception as e:
+            logging.error(f"Error logging relationship evolution: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }

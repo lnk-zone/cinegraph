@@ -1,7 +1,12 @@
 """Tests for the ConsistencyEngine class."""
 
 import pytest
+import asyncio
+import sys
+import os
 from datetime import datetime
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 from graphiti.rules.consistency_engine import ConsistencyEngine, ContradictionMatch
 
 
@@ -33,11 +38,12 @@ async def test_cypher_rules_setup(consistency_engine):
 
 @pytest.mark.asyncio
 async def test_detect_contradictions_empty_results(consistency_engine):
-    """Test detect_contradictions with empty results."""
-    contradictions = await consistency_engine.detect_contradictions("test_story", "user_123")
-    assert isinstance(contradictions, list)
-    assert len(contradictions) == 0
-
+    """Test detecting contradictions when no contradictions exist."""
+    result = await consistency_engine.detect_contradictions("test_story", "test_user")
+    
+    # The method returns a ContradictionDetectionResult object, not a list
+    assert hasattr(result, 'contradictions_found')
+    assert len(result.contradictions_found) == 0
 
 @pytest.mark.asyncio
 async def test_create_contradiction_edges(consistency_engine):

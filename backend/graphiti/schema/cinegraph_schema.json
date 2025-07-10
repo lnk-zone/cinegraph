@@ -6,7 +6,7 @@
     "location_type": ["city", "building", "room", "outdoor"],
     "accessibility": ["public", "private", "restricted", "secret"],
     "participation_level": ["active", "passive", "mentioned", "background"],
-    "relationship_type": ["family", "friend", "enemy", "ally", "romantic", "professional", "stranger"],
+      "relationship_type": ["family", "friend", "enemy", "ally", "romantic", "professional", "stranger", "mentor", "rival", "romantic_partner"],
     "emotional_valence": ["love", "like", "neutral", "dislike", "hate"],
     "relationship_status": ["current", "past", "complicated", "unknown"],
     "power_dynamic": ["equal", "dominant", "submissive", "complex"],
@@ -18,9 +18,29 @@
     "resolution_status": ["unresolved", "resolved", "false_positive", "ignored"],
     "implication_strength": ["certain", "probable", "possible", "weak"],
     "item_type": ["weapon", "tool", "clothing", "artifact", "symbol"],
-    "transfer_method": ["gift", "exchange", "theft", "inheritance"]
+    "transfer_method": ["gift", "exchange", "theft", "inheritance"],
+    "episode_type": ["Arc", "Chapter", "Thread"]
   },
   "entities": [
+    {
+      "name": "Episode",
+      "description": "Represents narrative story segments of different hierarchical types",
+      "properties": {
+        "episode_id": {"type": "string", "unique": true, "required": true},
+        "title": {"type": "string"},
+        "episode_type": {"type": "enum", "values": ["Arc", "Chapter", "Thread"]},
+        "pov_character_id": {"type": "string"},
+        "mood": {"type": "string"},
+        "significance_score": {"type": "integer", "min": 0, "max": 10},
+        "timestamp_in_story": {"type": "timestamp"},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    },
     {
       "name": "Character",
       "description": "Represents individual characters in the story",
@@ -120,6 +140,122 @@
   ],
   "relationships": [
     {
+      "type": "MENTORS",
+      "from": "Character",
+      "to": "Character",
+      "properties": {
+        "start_date": {"type": "timestamp"},
+        "end_date": {"type": "timestamp"},
+        "story_id": {"type": "string", "required": true}
+      }
+    },
+    {
+      "type": "RIVALS",
+      "from": "Character",
+      "to": "Character",
+      "properties": {
+        "intensity": {"type": "integer", "min": 1, "max": 10},
+        "story_id": {"type": "string", "required": true}
+      }
+    },
+    {
+      "type": "ROMANTIC_PARTNER",
+      "from": "Character",
+      "to": "Character",
+      "properties": {
+        "relationship_status": {"type": "enum", "values": ["current", "past", "complicated", "unknown"]},
+        "start_date": {"type": "timestamp"},
+        "story_id": {"type": "string", "required": true}
+      }
+    },
+    {
+      "type": "PARENT_OF",
+      "description": "Defines hierarchical relationships between episodes",
+      "from": "Episode",
+      "to": "Episode",
+      "properties": {
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    },
+    {
+      "type": "CALLBACKS_TO",
+      "description": "Connects episodes that reference past events",
+      "from": "Episode",
+      "to": "Episode",
+      "properties": {
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    },
+    {
+      "type": "FORESHADOWS",
+      "description": "Connects episodes that hint at future events",
+      "from": "Episode",
+      "to": "Episode",
+      "properties": {
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    },
+    {
+      "type": "RESOLVES",
+      "description": "Connects episodes that resolve previous events",
+      "from": "Episode",
+      "to": "Episode",
+      "properties": {
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    },
+    {
+      "type": "CONTAINS",
+      "description": "Connects episodes to scenes they contain",
+      "from": "Episode",
+      "to": "Scene",
+      "properties": {
+        "scene_order": {"type": "integer"},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    },
+    {
+      "type": "FEATURES",
+      "description": "Connects episodes to characters that are featured prominently",
+      "from": "Episode",
+      "to": "Character",
+      "properties": {
+        "prominence_level": {"type": "integer", "min": 1, "max": 10},
+        "character_arc_stage": {"type": "string"},
+        "story_id": {"type": "string", "required": true},
+        "user_id": {"type": "string", "required": true},
+        "valid_from": {"type": "timestamp", "temporal": true},
+        "valid_to": {"type": "timestamp", "temporal": true},
+        "created_at": {"type": "timestamp", "temporal": true},
+        "updated_at": {"type": "timestamp", "temporal": true}
+      }
+    },
+    {
       "type": "KNOWS",
       "description": "Connects characters to knowledge they possess",
       "from": "Character",
@@ -156,6 +292,9 @@
         "is_mutual": {"type": "boolean", "default": true},
         "relationship_context": {"type": "string"},
         "power_dynamic": {"type": "enum", "values": ["equal", "dominant", "submissive", "complex"]},
+        "milestone": {"type": "string"},
+        "trigger_event_id": {"type": "string"},
+        "secret_level": {"type": "integer", "min": 0, "max": 10},
         "story_id": {"type": "string", "required": true},
         "user_id": {"type": "string", "required": true},
         "valid_from": {"type": "timestamp", "temporal": true},
@@ -252,9 +391,10 @@
       "Every Character must have a unique name within a project",
       "Knowledge content cannot be empty or null",
       "Scene order must be sequential and unique",
-      "Location names must be unique within a project"
-    ,
-      "Item names must be unique within a project"
+      "Location names must be unique within a project",
+      "Item names must be unique within a project",
+      "Episode types must be Arc, Chapter, or Thread",
+      "Episode significance_score must be between 0 and 10"
     ],
     "relationship_validation": [
       "KNOWS relationships require valid character_id and knowledge_id",
@@ -262,7 +402,9 @@
       "PRESENT_IN relationships require valid character_id and scene_id",
       "Temporal properties must be logically consistent (valid_from <= valid_to)"
     ,
-      "OWNS relationships require valid character_id and item_id; ownership_start <= ownership_end"
+      "OWNS relationships require valid character_id and item_id; ownership_start <= ownership_end",
+      "PARENT_OF relationships cannot create circular hierarchies",
+      "Episode continuity relationships (CALLBACKS_TO, FORESHADOWS, RESOLVES) must be temporally consistent"
     ],
     "consistency_rules": [
       "Characters cannot know information before it exists in the story timeline",
@@ -271,6 +413,11 @@
       "Relationship changes must be temporally consistent"
     ,
       "Characters cannot own an item before it is introduced in the timeline"
+    ]
+  },
+  "analytics": {
+    "projection_labels": [
+      "REL_INDEX(character_id)"
     ]
   }
 }

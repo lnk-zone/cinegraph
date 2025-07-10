@@ -1,0 +1,15 @@
+{
+  "name": "cinegraph-frontend",
+  "version": "1.0.0",
+  "description": "Cinegraph frontend application",
+  "main": "index.js",
+  "scripts": {
+    "docs": "echo 'Markdown linting script placeholder - to be implemented'"
+  },
+  "keywords": [
+    "cinegraph",
+    "frontend"
+  ],
+  "author": "",
+  "license": "ISC"
+}

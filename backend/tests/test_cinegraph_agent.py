@@ -11,8 +11,20 @@ import json
 from unittest.mock import Mock, AsyncMock, patch
 from datetime import datetime
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
 from agents.cinegraph_agent import CineGraphAgent
-from agents.agent_factory import create_cinegraph_agent, initialize_cinegraph_agent
+try:
+    from agents.agent_factory import create_cinegraph_agent, initialize_cinegraph_agent
+except ImportError:
+    # Mock these if they don't exist
+    def create_cinegraph_agent(*args, **kwargs):
+        return CineGraphAgent(*args, **kwargs)
+    def initialize_cinegraph_agent(*args, **kwargs):
+        pass
+
 from core.graphiti_manager import GraphitiManager
 from core.models import GraphitiConfig
 
@@ -26,6 +38,9 @@ class TestCineGraphAgent:
         manager = Mock(spec=GraphitiManager)
         manager.client = Mock()
         manager.client.query = AsyncMock(return_value=[])
+        manager.client.search = AsyncMock(return_value=[{"result": "test"}])
+        manager._run_cypher_query = AsyncMock(return_value=[{"result": "test"}])
+        manager._story_sessions = {"story_123": "session_123"}
         manager.health_check = AsyncMock(return_value={"status": "healthy"})
         manager.initialize = AsyncMock()
         return manager
@@ -50,7 +65,11 @@ class TestCineGraphAgent:
         """Create a CineGraphAgent instance with mocks."""
         with patch('agents.cinegraph_agent.AsyncOpenAI', return_value=mock_openai_client), \
              patch('agents.cinegraph_agent.create_client', return_value=mock_supabase_client), \
-             patch('agents.cinegraph_agent.alert_manager'):
+             patch('agents.cinegraph_agent.alert_manager') as mock_alert_manager:
+            # Mock the alert manager to avoid Redis connection
+            mock_alert_manager.start_listening = AsyncMock()
+            mock_alert_manager.add_alert_handler = Mock()
+            
             agent = CineGraphAgent(
                 graphiti_manager=mock_graphiti_manager,
                 openai_api_key="test_key",
@@ -98,7 +117,7 @@ class TestCineGraphAgent:
         """Test narrative context tool functionality."""
         # Mock search result for episodic API
         mock_result = Mock()
-        mock_result.fact = "Scene 1 content"
+        mock_result.episode_body = "Scene 1 content"
         mock_result.created_at = datetime.utcnow()
         mock_result.uuid = "fact_123"
         

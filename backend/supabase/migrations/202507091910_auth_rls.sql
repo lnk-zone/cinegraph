@@ -34,6 +34,7 @@ ON CONFLICT DO NOTHING;
 
 -- Create stories table
 CREATE TABLE IF NOT EXISTS public.stories (
+    story_type TEXT DEFAULT 'regular' CHECK (story_type IN ('Arc', 'Chapter', 'Thread')),
     id TEXT PRIMARY KEY,
     user_id uuid NOT NULL REFERENCES public.profiles(id),
     title TEXT,

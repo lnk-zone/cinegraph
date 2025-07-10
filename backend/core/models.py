@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 from pydantic import BaseModel, Field
 from enum import Enum
+import uuid
 
 class ItemType(str, Enum):
     """Types of items in the knowledge graph."""
@@ -37,6 +38,7 @@ class ItemEntity(BaseModel):
     location_found: Optional[str] = Field(default=None, description="Location where the item is found")
     current_owner: Optional[str] = Field(default=None, description="Current owner of the item")
     is_active: bool = Field(default=True, description="Whether the item is actively part of the story")
+    version: Optional[int] = Field(default=None, description="Version of the item schema for forward compatibility")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
@@ -50,6 +52,7 @@ class Ownership(BaseModel):
     obtained_from: Optional[str] = Field(default=None, description="Who the item was obtained from")
     transfer_method: TransferMethod = Field(..., description="Method of transfer")
     ownership_notes: Optional[str] = Field(default=None, description="Additional notes about the ownership")
+    version: Optional[int] = Field(default=None, description="Version of the ownership schema for forward compatibility")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
@@ -64,6 +67,46 @@ class StoryInput(BaseModel):
     metadata: Optional[Dict[str, Any]] = Field(default=None, description="Additional story metadata")
 
 
+class EpisodeType(str, Enum):
+    """Different types of episodes."""
+    PREMIERE = "premiere"
+    FINALE = "finale"
+    SPECIAL = "special"
+    REGULAR = "regular"
+
+class MoodType(str, Enum):
+    """Moods for episodes."""
+    HAPPY = "happy"
+    SAD = "sad"
+    SUSPENSE = "suspense"
+    DRAMATIC = "dramatic"
+
+class RelationshipMilestone(str, Enum):
+    """Milestones in relationships."""
+    FIRST_MEETING = "first_meeting"
+    FRIENDS = "friends"
+    ENEMIES = "enemies"
+    ALLIES = "allies"
+
+class SecretLevel(str, Enum):
+    """Levels of secret information."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+class EpisodeEntity(BaseModel):
+    """Represents an episode entity in the knowledge graph."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for the episode")
+    type: EpisodeType = Field(..., description="Type of the episode")
+    parent_id: Optional[str] = Field(default=None, description="Parent episode ID")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata about the episode")
+    version: Optional[int] = Field(default=None, description="Version of the episode schema for forward compatibility")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
+
 class EntityType(str, Enum):
     """Types of entities in the knowledge graph."""
     CHARACTER = "CHARACTER"
@@ -72,6 +115,7 @@ class EntityType(str, Enum):
     ITEM = "ITEM"
     KNOWLEDGE = "KNOWLEDGE"
     SCENE = "SCENE"
+    EPISODE = "EPISODE"
 
 
 class RelationshipType(str, Enum):
@@ -85,49 +129,6 @@ class RelationshipType(str, Enum):
     OWNS = "OWNS"
 
 
-class ItemType(str, Enum):
-    """Types of items in the knowledge graph."""
-    WEAPON = "weapon"
-    TOOL = "tool"
-    CLOTHING = "clothing"
-    ARTIFACT = "artifact"
-
-
-class TransferMethod(str, Enum):
-    """Methods of item transfer in the knowledge graph."""
-    GIFT = "gift"
-    EXCHANGE = "exchange"
-    THEFT = "theft"
-    INHERITANCE = "inheritance"
-
-
-class ItemEntity(BaseModel):
-    """Represents an item entity in the knowledge graph."""
-    
-    id: str = Field(..., description="Unique identifier for the item")
-    type: ItemType = Field(..., description="Type of the item")
-    name: str = Field(..., description="Name of the item")
-    description: Optional[str] = Field(default=None, description="Description of the item")
-    origin_scene: Optional[str] = Field(default=None, description="Scene where the item first appears")
-    location_found: Optional[str] = Field(default=None, description="Location where the item is found")
-    current_owner: Optional[str] = Field(default=None, description="Current owner of the item")
-    is_active: bool = Field(default=True, description="Whether the item is actively part of the story")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
-    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
-
-
-class Ownership(BaseModel):
-    """Represents an ownership relationship in the knowledge graph."""
-    
-    from_id: str = Field(..., description="Character ID who owns the item")
-    to_id: str = Field(..., description="Item ID that is owned")
-    ownership_start: datetime = Field(..., description="Timestamp when ownership starts")
-    ownership_end: Optional[datetime] = Field(default=None, description="Timestamp when ownership ends")
-    obtained_from: Optional[str] = Field(default=None, description="Who the item was obtained from")
-    transfer_method: TransferMethod = Field(..., description="Method of transfer")
-    ownership_notes: Optional[str] = Field(default=None, description="Additional notes about the ownership")
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
-    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
 
 class GraphEntity(BaseModel):
@@ -137,17 +138,38 @@ class GraphEntity(BaseModel):
     type: EntityType = Field(..., description="Type of the entity")
     name: str = Field(..., description="Entity name")
     properties: Dict[str, Any] = Field(default_factory=dict, description="Entity properties")
+    version: Optional[int] = Field(default=None, description="Version of the entity schema for forward compatibility")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
 
 class GraphRelationship(BaseModel):
     """Represents a relationship in the knowledge graph."""
-    
+
     type: RelationshipType = Field(..., description="Type of the relationship")
     from_id: str = Field(..., description="Source entity ID")
     to_id: str = Field(..., description="Target entity ID")
     properties: Dict[str, Any] = Field(default_factory=dict, description="Relationship properties")
+    version: Optional[int] = Field(default=None, description="Version of the relationship schema for forward compatibility")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
+
+class ContinuityEdge(GraphRelationship):
+    """Represents an edge for continuity between story parts such as episodes."""
+
+class CharacterRelationshipEvolution(BaseModel):
+    """Tracks character relationship evolution over time."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for the evolution entry")
+    character_id: str = Field(..., description="Character ID")
+    target_character_id: str = Field(..., description="Target character ID")
+    episode_id: Optional[str] = Field(default=None, description="Episode where change occurred")
+    milestone: RelationshipMilestone = Field(..., description="Milestone in the relationship")
+    mood: Optional[MoodType] = Field(default=None, description="Mood during this milestone")
+    secret_level: Optional[SecretLevel] = Field(default=None, description="Secret level involved")
+    story_id: str = Field(..., description="Story identifier")
+    version: Optional[int] = Field(default=None, description="Version of the evolution schema for forward compatibility")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When the change occurred")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
@@ -268,3 +290,36 @@ class UserProfileUpdate(BaseModel):
     
     full_name: Optional[str] = Field(default=None, description="User's full name")
     avatar_url: Optional[str] = Field(default=None, description="URL to user's avatar image")
+
+
+class RelationshipEvolution(BaseModel):
+    """Tracks the evolution of relationships over time."""
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier for the evolution entry")
+    relationship_id: str = Field(..., description="ID of the relationship being tracked")
+    from_character_id: str = Field(..., description="Source character ID")
+    to_character_id: str = Field(..., description="Target character ID")
+    relationship_type: str = Field(..., description="Type of relationship")
+    strength_before: Optional[float] = Field(default=None, description="Relationship strength before change")
+    strength_after: float = Field(..., description="Relationship strength after change")
+    change_reason: Optional[str] = Field(default=None, description="Reason for the relationship change")
+    episode_id: Optional[str] = Field(default=None, description="Episode where change occurred")
+    story_id: str = Field(..., description="Story identifier")
+    user_id: str = Field(..., description="User identifier")
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When the change occurred")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+
+
+class EpisodeHierarchy(BaseModel):
+    """Represents the hierarchical structure of episodes."""
+    
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier")
+    episode_id: str = Field(..., description="Episode identifier")
+    parent_episode_id: Optional[str] = Field(default=None, description="Parent episode ID (for sub-episodes)")
+    child_episodes: List[str] = Field(default_factory=list, description="List of child episode IDs")
+    depth_level: int = Field(default=0, description="Depth in the hierarchy (0 = root level)")
+    sequence_order: int = Field(..., description="Order within the same level")
+    story_id: str = Field(..., description="Story identifier")
+    user_id: str = Field(..., description="User identifier")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")

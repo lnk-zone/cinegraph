@@ -20,7 +20,9 @@ celery_app = Celery(
     backend=os.getenv('REDIS_URL', 'redis://localhost:6379/0'),
     include=[
         'tasks.temporal_contradiction_detection',
-        'tasks.story_processing'
+        'tasks.story_processing',
+        'tasks.relationship_evolution_tracker',
+        'tasks.continuity_validator'
     ]
 )
 
@@ -48,11 +50,23 @@ celery_app.conf.update(
             'task': 'tasks.temporal_contradiction_detection.cleanup_old_contradictions',
             'schedule': crontab(minute=0, hour='*/6'),  # Every 6 hours
             'options': {'queue': 'maintenance'}
+        },
+        'nightly-relationship-evolution-scan': {
+            'task': 'tasks.relationship_evolution_tracker.detect_milestones_tension_spikes',
+            'schedule': crontab(minute=0, hour=2),  # Every night at 2 AM
+            'options': {'queue': 'relationship_tracking'}
+        },
+        'nightly-continuity-validation': {
+            'task': 'tasks.continuity_validator.ensure_foreshadow_resolution',
+            'schedule': crontab(minute=30, hour=2),  # Every night at 2:30 AM
+            'options': {'queue': 'continuity_validation'}
         }
     },
     task_routes={
         'tasks.temporal_contradiction_detection.*': {'queue': 'contradiction_detection'},
         'tasks.story_processing.*': {'queue': 'story_processing'},
+        'tasks.relationship_evolution_tracker.*': {'queue': 'relationship_tracking'},
+        'tasks.continuity_validator.*': {'queue': 'continuity_validation'},
     }
 )
 

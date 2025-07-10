@@ -1,9 +1,15 @@
 """Test configuration and fixtures for Graphiti rules testing."""
 
 import os
+import sys
 import pytest
 import asyncio
 import pytest_asyncio
+
+# Add the parent directory to the path so we can import from the project
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+
+from graphiti_core import Graphiti
 from graphiti.rules.validation_rules import ValidationRules
 from graphiti.rules.background_jobs import BackgroundConsistencyJob
 from graphiti.rules.consistency_engine import ConsistencyEngine

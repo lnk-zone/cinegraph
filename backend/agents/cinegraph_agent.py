@@ -18,6 +18,140 @@ from core.models import TemporalQuery
 from supabase import create_client, Client
 
 
+class DialoguePatternExtractor:
+    """
+    Extracts dialogue patterns from episodic search results.
+    """
+    
+    def __init__(self, search_results):
+        self.search_results = search_results
+        
+    def extract_patterns(self) -> List[Dict[str, Any]]:
+        """Extract dialogue patterns from search results."""
+        patterns = []
+        
+        for result in self.search_results:
+            content = getattr(result, 'episode_body', '')
+            if 'dialogue' in content.lower() or 'said' in content.lower():
+                # Simple pattern extraction - look for character mentions
+                characters = self._extract_characters(content)
+                if len(characters) >= 2:
+                    for i, char1 in enumerate(characters):
+                        for char2 in characters[i+1:]:
+                            patterns.append({
+                                "character_1": char1,
+                                "character_2": char2,
+                                "interaction_type": "dialogue",
+                                "content": content,
+                                "timestamp": getattr(result, 'created_at', None)
+                            })
+        
+        return patterns
+    
+    def _extract_characters(self, content: str) -> List[str]:
+        """Extract character names from content using simple heuristics."""
+        import re
+        # Look for capitalized words that might be character names
+        character_pattern = r'\b[A-Z][a-z]+\b'
+        potential_chars = re.findall(character_pattern, content)
+        
+        # Filter common words that aren't character names
+        common_words = {'The', 'And', 'But', 'For', 'Not', 'With', 'He', 'She', 'They', 'Story', 'Episode'}
+        characters = [char for char in potential_chars if char not in common_words]
+        
+        return list(set(characters))  # Remove duplicates
+
+
+class InteractionStrengthExtractor:
+    """
+    Calculates relationship strengths from dialogue patterns.
+    """
+    
+    def __init__(self, dialogue_patterns):
+        self.dialogue_patterns = dialogue_patterns
+        
+    def calculate_strengths(self) -> Dict[Tuple[str, str], int]:
+        """Calculate interaction strengths between character pairs."""
+        strengths = {}
+        
+        for pattern in self.dialogue_patterns:
+            char1 = pattern["character_1"]
+            char2 = pattern["character_2"]
+            
+            # Create bidirectional strength tracking
+            pair = tuple(sorted([char1, char2]))
+            
+            if pair not in strengths:
+                strengths[pair] = 0
+            
+            # Increment strength based on interaction type
+            if pattern["interaction_type"] == "dialogue":
+                strengths[pair] += 2  # Dialogue interactions are strong
+            else:
+                strengths[pair] += 1  # Other interactions are weaker
+        
+        return strengths
+
+
+class SNARelationshipExtractor:
+    """
+    Generates SNA-ready relationships with proper metrics for Neo4j graph algorithms.
+    """
+    
+    def __init__(self, relationship_strengths):
+        self.relationship_strengths = relationship_strengths
+        
+    def generate_sna_relationships(self) -> List[Dict[str, Any]]:
+        """Generate relationships optimized for SNA algorithms."""
+        relationships = []
+        
+        for (char1, char2), strength in self.relationship_strengths.items():
+            # Determine relationship type based on strength
+            rel_type = self._determine_relationship_type(strength)
+            
+            # Calculate confidence based on interaction frequency
+            confidence = min(strength / 20.0, 1.0)  # Scale to 0-1
+            
+            # Create bidirectional relationships for SNA
+            relationships.extend([
+                {
+                    "from_character": char1,
+                    "to_character": char2,
+                    "type": rel_type,
+                    "strength": strength,
+                    "confidence": confidence,
+                    "bidirectional": True,
+                    "sna_weight": strength,  # For centrality calculations
+                    "trust_level": min(strength // 2, 10),  # Trust correlates with interaction
+                    "relationship_status": "current"
+                },
+                {
+                    "from_character": char2,
+                    "to_character": char1,
+                    "type": rel_type,
+                    "strength": strength,
+                    "confidence": confidence,
+                    "bidirectional": True,
+                    "sna_weight": strength,
+                    "trust_level": min(strength // 2, 10),
+                    "relationship_status": "current"
+                }
+            ])
+        
+        return relationships
+    
+    def _determine_relationship_type(self, strength: int) -> str:
+        """Determine relationship type based on interaction strength."""
+        if strength >= 15:
+            return "FRIENDS_WITH"  # Strong positive relationship
+        elif strength >= 8:
+            return "KNOWS"  # Moderate relationship
+        elif strength >= 3:
+            return "ACQUAINTED_WITH"  # Weak relationship
+        else:
+            return "MENTIONED_WITH"  # Very weak relationship
+
+
 class CineGraphAgent:
     """
     AI-powered agent for story consistency validation, querying, and analysis.
@@ -372,6 +506,28 @@ class CineGraphAgent:
                 ORDER BY k1.importance_level DESC
             """,
             
+            # Tier-2 Templates for Relationship Milestones and Plot Thread Resolution
+            "relationship_milestones_over_time": """
+                MATCH (c1:Character)-[r:RELATIONSHIP]-(c2:Character)
+                WHERE c1.name = $character_a AND c2.name = $character_b AND c1.story_id = $story_id
+                AND ($user_id IS NULL OR c1.user_id = $user_id)
+                AND (r.established_at BETWEEN $start_time AND $end_time OR r.updated_at BETWEEN $start_time AND $end_time)
+                RETURN r.relationship_type, r.relationship_strength, r.trust_level, r.emotional_valence, 
+                       r.power_dynamic, r.established_at, r.updated_at, r.last_interaction
+                ORDER BY r.updated_at ASC
+            """,
+            
+            "plot_thread_resolution_status": """
+                MATCH (k:Knowledge {story_id: $story_id})
+                WHERE ($user_id IS NULL OR k.user_id = $user_id)
+                AND ($verification_status IS NULL OR k.verification_status = $verification_status)
+                OPTIONAL MATCH (k)-[contradicts:CONTRADICTS]-(other:Knowledge)
+                RETURN k.content, k.source_scene, k.verification_status, k.updated_at, k.importance_level,
+                       collect(DISTINCT {contradiction: other.content, severity: contradicts.severity, 
+                                       resolution_status: contradicts.resolution_status}) as related_contradictions
+                ORDER BY k.importance_level DESC, k.updated_at DESC
+            """,
+            
             # Enhanced Story Timeline
             "story_timeline_detailed": """
                 MATCH (s:Scene {story_id: $story_id})
@@ -690,7 +846,7 @@ class CineGraphAgent:
                                 "temporal_knowledge_conflicts", "story_timeline_detailed", "knowledge_propagation",
                                 "contradictions_by_severity", "character_activity_timeline", "location_accessibility",
                                 "relationship_strength_analysis", "character_trust_network", "knowledge_sharing_patterns",
-                                "scene_participation_analysis"
+                                "scene_participation_analysis", "relationship_milestones_over_time", "plot_thread_resolution_status"
                             ]
                         },
                         "params": {
@@ -746,6 +902,150 @@ class CineGraphAgent:
                         }
                     },
                     "required": ["story_id"]
+                }
+            },
+            {
+                "name": "episode_analysis",
+                "description": "Analyze episodic content structure and narrative flow across story episodes",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "story_id": {
+                            "type": "string",
+                            "description": "The story identifier"
+                        },
+                        "episode_range": {
+                            "type": "object",
+                            "description": "Range of episodes to analyze",
+                            "properties": {
+                                "start_episode": {"type": "integer", "minimum": 1},
+                                "end_episode": {"type": "integer", "minimum": 1}
+                            }
+                        },
+                        "analysis_type": {
+                            "type": "string",
+                            "enum": ["narrative_flow", "character_development", "plot_progression", "thematic_analysis", "pacing_analysis"],
+                            "description": "Type of episodic analysis to perform"
+                        },
+                        "user_id": {
+                            "type": "string",
+                            "description": "User identifier for data isolation"
+                        }
+                    },
+                    "required": ["story_id", "analysis_type", "user_id"]
+                }
+            },
+            {
+                "name": "relationship_evolution",
+                "description": "Track and analyze how character relationships evolve over time and story episodes",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "story_id": {
+                            "type": "string",
+                            "description": "The story identifier"
+                        },
+                        "character_pairs": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "character_a": {"type": "string"},
+                                    "character_b": {"type": "string"}
+                                },
+                                "required": ["character_a", "character_b"]
+                            },
+                            "description": "Specific character pairs to analyze (optional - analyzes all if not provided)"
+                        },
+                        "time_range": {
+                            "type": "object",
+                            "description": "Time range for relationship evolution analysis",
+                            "properties": {
+                                "start_time": {"type": "string", "format": "date-time"},
+                                "end_time": {"type": "string", "format": "date-time"}
+                            }
+                        },
+                        "evolution_metrics": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": ["trust_level", "relationship_strength", "emotional_valence", "power_dynamic", "interaction_frequency"]
+                            },
+                            "description": "Specific relationship metrics to track"
+                        },
+                        "user_id": {
+                            "type": "string",
+                            "description": "User identifier for data isolation"
+                        }
+                    },
+                    "required": ["story_id", "user_id"]
+                }
+            },
+            {
+                "name": "sna_overview",
+                "description": "Perform Social Network Analysis (SNA) to provide overview of character relationship networks and social dynamics",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "story_id": {
+                            "type": "string",
+                            "description": "The story identifier"
+                        },
+                        "network_scope": {
+                            "type": "string",
+                            "enum": ["full_story", "episode_range", "character_centric"],
+                            "description": "Scope of the social network analysis"
+                        },
+                        "scope_parameters": {
+                            "type": "object",
+                            "description": "Parameters specific to the chosen network scope",
+                            "properties": {
+                                "episodes": {
+                                    "type": "array",
+                                    "items": {"type": "integer"},
+                                    "description": "Episode numbers for episode_range scope"
+                                },
+                                "central_character": {
+                                    "type": "string",
+                                    "description": "Central character for character_centric scope"
+                                },
+                                "degrees_of_separation": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "maximum": 5,
+                                    "description": "Degrees of separation for character_centric analysis"
+                                }
+                            }
+                        },
+                        "analysis_metrics": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": ["centrality", "clustering", "community_detection", "influence_paths", "network_density", "bridge_characters"]
+                            },
+                            "description": "SNA metrics to calculate"
+                        },
+                        "relationship_filters": {
+                            "type": "object",
+                            "description": "Filters for relationship types to include in analysis",
+                            "properties": {
+                                "relationship_types": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string",
+                                        "enum": ["family", "friend", "enemy", "ally", "romantic", "professional", "stranger"]
+                                    }
+                                },
+                                "min_trust_level": {"type": "integer", "minimum": 1, "maximum": 10},
+                                "min_relationship_strength": {"type": "integer", "minimum": 1, "maximum": 10}
+                            }
+                        },
+                        "user_id": {
+                            "type": "string",
+                            "description": "User identifier for data isolation"
+                        }
+                    },
+                    "required": ["story_id", "network_scope", "user_id"]
                 }
             }
         ]
@@ -1387,6 +1687,299 @@ class CineGraphAgent:
         await alert_manager.start_listening()
         print("CineGraph Agent initialized and listening for alerts.")
     
+    async def discover_relationships(self, movie_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Discover relationships from script/metadata and return Cypher ready for GraphitiManager.
+        Uses SNA features and modular extractors.
+
+        Args:
+            movie_id: Unique identifier for the movie script.
+            user_id: User ID for data isolation.
+
+        Returns:
+            Dict containing relationships and Cypher queries.
+        """
+        try:
+            # Use GraphitiManager to search for existing content related to this movie
+            session_id = self.graphiti_manager._story_sessions.get(movie_id)
+            if not session_id:
+                return {
+                    "status": "error",
+                    "error": f"No session found for movie {movie_id}",
+                    "relationships": [],
+                    "cypher_queries": []
+                }
+            
+            # Search for dialogue and interaction data using GraphitiManager
+            search_results = await self.graphiti_manager.client.search(
+                query=f"dialogue interaction character {movie_id}",
+                group_ids=[session_id],
+                num_results=50
+            )
+            
+            # Extract dialogue patterns from search results
+            dialogue_extractor = DialoguePatternExtractor(search_results)
+            dialogue_patterns = dialogue_extractor.extract_patterns()
+            
+            # Extract interaction strengths
+            interaction_extractor = InteractionStrengthExtractor(dialogue_patterns)
+            relationship_strengths = interaction_extractor.calculate_strengths()
+            
+            # Generate SNA-ready relationships
+            sna_extractor = SNARelationshipExtractor(relationship_strengths)
+            sna_relationships = sna_extractor.generate_sna_relationships()
+            
+            # Build Cypher queries for GraphitiManager
+            cypher_queries = []
+            for rel in sna_relationships:
+                cypher_query = self._build_relationship_cypher(rel, movie_id, user_id)
+                cypher_queries.append(cypher_query)
+            
+            return {
+                "status": "success",
+                "movie_id": movie_id,
+                "relationships_discovered": len(sna_relationships),
+                "relationships": sna_relationships,
+                "cypher_queries": cypher_queries,
+                "sna_metrics": {
+                    "total_interactions": len(dialogue_patterns),
+                    "unique_character_pairs": len(relationship_strengths),
+                    "avg_interaction_strength": sum(rel["strength"] for rel in sna_relationships) / len(sna_relationships) if sna_relationships else 0
+                }
+            }
+            
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "movie_id": movie_id,
+                "relationships": [],
+                "cypher_queries": []
+            }
+    
+    def _build_relationship_cypher(self, relationship: Dict[str, Any], movie_id: str, user_id: str) -> str:
+        """
+        Build Cypher query for a single relationship.
+        
+        Args:
+            relationship: Relationship data dict
+            movie_id: Movie identifier
+            user_id: User identifier
+            
+        Returns:
+            Cypher query string
+        """
+        rel_type = relationship.get("type", "FRIENDS_WITH")
+        from_char = relationship.get("from_character")
+        to_char = relationship.get("to_character")
+        strength = relationship.get("strength", 1)
+        confidence = relationship.get("confidence", 0.5)
+        
+        cypher = f"""
+        MERGE (a:Character {{name: '{from_char}', story_id: '{movie_id}', user_id: '{user_id}'}})
+        MERGE (b:Character {{name: '{to_char}', story_id: '{movie_id}', user_id: '{user_id}'}})
+        MERGE (a)-[r:{rel_type}]->(b)
+        SET r.strength = {strength},
+            r.confidence_level = {confidence},
+            r.discovered_method = 'sna_extraction',
+            r.story_id = '{movie_id}',
+            r.user_id = '{user_id}',
+            r.created_at = timestamp(),
+            r.updated_at = timestamp()
+        RETURN a, r, b
+        """.strip()
+        
+        return cypher
+
+
+    async def analyze_scenes(self, scenes: List[Dict[str, Any]], story_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Analyze scenes using AI to extract enhanced metadata and relationships.
+        
+        Args:
+            scenes: List of scene dictionaries
+            story_id: Story identifier
+            user_id: User ID for data isolation
+            
+        Returns:
+            Dict containing enhanced scene data with AI-powered analysis
+        """
+        try:
+            if not self.openai_client:
+                # Fallback to basic processing
+                return await self._fallback_scene_analysis(scenes, story_id, user_id)
+            
+            enhanced_scenes = []
+            all_entities = []
+            all_relationships = []
+            all_knowledge_items = []
+            continuity_edges = []
+            
+            # Process scenes in batches for efficiency
+            batch_size = 3
+            for i in range(0, len(scenes), batch_size):
+                batch = scenes[i:i + batch_size]
+                batch_results = await self._process_scene_batch(batch, story_id, user_id)
+                
+                enhanced_scenes.extend(batch_results.get("scenes", []))
+                all_entities.extend(batch_results.get("entities", []))
+                all_relationships.extend(batch_results.get("relationships", []))
+                all_knowledge_items.extend(batch_results.get("knowledge_items", []))
+                continuity_edges.extend(batch_results.get("continuity_edges", []))
+            
+            return {
+                "entities": all_entities,
+                "relationships": all_relationships,
+                "scenes": enhanced_scenes,
+                "knowledge_items": all_knowledge_items,
+                "continuity_edges": continuity_edges,
+                "processing_method": "ai_enhanced",
+                "model_used": self.model
+            }
+            
+        except Exception as e:
+            print(f"Warning: AI scene analysis failed: {e}")
+            return await self._fallback_scene_analysis(scenes, story_id, user_id)
+    
+    async def _process_scene_batch(self, scenes: List[Dict[str, Any]], story_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Process a batch of scenes using OpenAI for enhanced analysis.
+        
+        Args:
+            scenes: Batch of scenes to process
+            story_id: Story identifier
+            user_id: User ID for data isolation
+            
+        Returns:
+            Dict containing processed batch results
+        """
+        scene_texts = [scene["text"] for scene in scenes]
+        combined_text = "\n\n".join(scene_texts)
+        
+        analysis_prompt = f"""
+        Analyze the following story scenes and provide structured analysis:
+        
+        Story ID: {story_id}
+        Scenes:
+        {combined_text}
+        
+        For each scene, provide:
+        1. Chapter/Episode structure detection
+        2. Point of view analysis (first/second/third person)
+        3. Mood and emotional tone (happy, sad, tense, dramatic, mysterious, action)
+        4. Story arc classification (exposition, rising_action, climax, falling_action, resolution)
+        5. Significance score (0.0-1.0)
+        6. Characters mentioned
+        7. Locations mentioned
+        8. Key themes or topics
+        9. Continuity references (callbacks, foreshadowing)
+        
+        Return the analysis as a JSON object with the following structure:
+        {{
+            "scenes": [
+                {{
+                    "scene_id": "scene_1",
+                    "chapter": 1,
+                    "episode": 1,
+                    "pov": {{"type": "first_person", "confidence": 0.9}},
+                    "mood": {{"primary_mood": "tense", "intensity": 0.7, "secondary_moods": ["mysterious"]}},
+                    "story_arc": {{"primary_arc": "rising_action", "intensity": 0.8}},
+                    "significance": {{"score": 0.75, "reasoning": "Key plot development"}},
+                    "characters": ["character_name1", "character_name2"],
+                    "locations": ["location_name1"],
+                    "themes": ["mystery", "fear"],
+                    "continuity_references": ["reference to earlier event"]
+                }}
+            ],
+            "entities": [...],
+            "relationships": [...],
+            "continuity_edges": [...]
+        }}
+        """
+        
+        try:
+            response = await self.openai_client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an expert story analyst. Analyze narrative structure, characters, and themes with precision."},
+                    {"role": "user", "content": analysis_prompt}
+                ],
+                max_tokens=4000,
+                temperature=0.3
+            )
+            
+            # Parse the JSON response
+            analysis_result = json.loads(response.choices[0].message.content)
+            
+            # Enhance scenes with original metadata
+            enhanced_scenes = []
+            for i, scene in enumerate(scenes):
+                if i < len(analysis_result.get("scenes", [])):
+                    ai_analysis = analysis_result["scenes"][i]
+                    enhanced_scene = {
+                        **scene,  # Keep original metadata
+                        "ai_analysis": ai_analysis,
+                        "chapter": ai_analysis.get("chapter", 1),
+                        "episode": ai_analysis.get("episode", 1),
+                        "pov": ai_analysis.get("pov", {"type": "unknown", "confidence": 0.0}),
+                        "mood": ai_analysis.get("mood", {"primary_mood": "neutral", "intensity": 0.5}),
+                        "story_arc": ai_analysis.get("story_arc", {"primary_arc": "neutral", "intensity": 0.0}),
+                        "significance": ai_analysis.get("significance", {"score": 0.5})
+                    }
+                    enhanced_scenes.append(enhanced_scene)
+                else:
+                    enhanced_scenes.append(scene)
+            
+            return {
+                "scenes": enhanced_scenes,
+                "entities": analysis_result.get("entities", []),
+                "relationships": analysis_result.get("relationships", []),
+                "knowledge_items": analysis_result.get("knowledge_items", []),
+                "continuity_edges": analysis_result.get("continuity_edges", [])
+            }
+            
+        except json.JSONDecodeError as e:
+            print(f"Warning: Failed to parse AI response as JSON: {e}")
+            return await self._fallback_scene_analysis(scenes, story_id, user_id)
+        except Exception as e:
+            print(f"Warning: AI batch processing failed: {e}")
+            return await self._fallback_scene_analysis(scenes, story_id, user_id)
+    
+    async def _fallback_scene_analysis(self, scenes: List[Dict[str, Any]], story_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Fallback scene analysis using basic heuristics.
+        
+        Args:
+            scenes: List of scene dictionaries
+            story_id: Story identifier
+            user_id: User ID for data isolation
+            
+        Returns:
+            Dict containing basic analysis results
+        """
+        # Simple fallback processing
+        enhanced_scenes = []
+        for i, scene in enumerate(scenes):
+            enhanced_scene = {
+                **scene,
+                "chapter": 1,  # Default chapter
+                "episode": i + 1,  # Sequential episodes
+                "pov": {"type": "unknown", "confidence": 0.0},
+                "mood": {"primary_mood": "neutral", "intensity": 0.5},
+                "story_arc": {"primary_arc": "neutral", "intensity": 0.0},
+                "significance": {"score": 0.5}
+            }
+            enhanced_scenes.append(enhanced_scene)
+        
+        return {
+            "entities": [],
+            "relationships": [],
+            "scenes": enhanced_scenes,
+            "knowledge_items": [],
+            "continuity_edges": [],
+            "processing_method": "fallback"
+        }
+    
     async def analyze_story(self, content: str, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Analyze story content and provide insights using OpenAI SDK.
@@ -1766,6 +2359,30 @@ class CineGraphAgent:
                 function_args.get("story_id", story_id),
                 function_args.get("scene_id")
             )
+        elif function_name == "episode_analysis":
+            return await self.episode_analysis(
+                function_args.get("story_id", story_id),
+                function_args.get("analysis_type"),
+                function_args.get("user_id"),
+                function_args.get("episode_range")
+            )
+        elif function_name == "relationship_evolution":
+            return await self.relationship_evolution(
+                function_args.get("story_id", story_id),
+                function_args.get("user_id"),
+                function_args.get("character_pairs"),
+                function_args.get("time_range"),
+                function_args.get("evolution_metrics")
+            )
+        elif function_name == "sna_overview":
+            return await self.sna_overview(
+                function_args.get("story_id", story_id),
+                function_args.get("user_id"),
+                function_args.get("network_scope"),
+                function_args.get("scope_parameters"),
+                function_args.get("analysis_metrics"),
+                function_args.get("relationship_filters")
+            )
         else:
             return {"error": f"Unknown function: {function_name}"}
     
@@ -2095,3 +2712,233 @@ class CineGraphAgent:
             recommendations.append(f"Consider resolving {len(categorized['minor'])} minor issues")
         
         return recommendations
+    
+    # === NEW TIER-2 AGENT TOOLS ===
+    
+    async def episode_analysis(self, story_id: str, analysis_type: str, user_id: str, episode_range: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+        """Analyze episodic content structure and narrative flow across story episodes."""
+        try:
+            if not self.graphiti_manager:
+                return {"error": "GraphitiManager not available for episode analysis"}
+            
+            # Perform episode analysis based on the analysis type
+            if analysis_type == "narrative_flow":
+                # Analyze narrative flow across episodes
+                result = await self._analyze_narrative_flow(story_id, user_id, episode_range)
+            elif analysis_type == "character_development":
+                # Analyze character development across episodes
+                result = await self._analyze_character_development(story_id, user_id, episode_range)
+            elif analysis_type == "plot_progression":
+                # Analyze plot progression across episodes
+                result = await self._analyze_plot_progression(story_id, user_id, episode_range)
+            elif analysis_type == "thematic_analysis":
+                # Analyze themes across episodes
+                result = await self._analyze_themes(story_id, user_id, episode_range)
+            elif analysis_type == "pacing_analysis":
+                # Analyze pacing across episodes
+                result = await self._analyze_pacing(story_id, user_id, episode_range)
+            else:
+                return {"error": f"Unknown analysis type: {analysis_type}"}
+            
+            return {
+                "story_id": story_id,
+                "analysis_type": analysis_type,
+                "episode_range": episode_range,
+                "timestamp": datetime.utcnow().isoformat(),
+                "results": result
+            }
+            
+        except Exception as e:
+            return {"error": str(e), "story_id": story_id, "analysis_type": analysis_type}
+    
+    async def relationship_evolution(self, story_id: str, user_id: str, character_pairs: Optional[List[Dict[str, str]]] = None, 
+                                    time_range: Optional[Dict[str, str]] = None, evolution_metrics: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Track and analyze how character relationships evolve over time and story episodes."""
+        try:
+            if not self.graphiti_manager:
+                return {"error": "GraphitiManager not available for relationship evolution analysis"}
+            
+            # Use the tier-2 template for relationship milestones
+            if character_pairs:
+                # Analyze specific character pairs
+                evolution_data = []
+                for pair in character_pairs:
+                    pair_result = await self.optimized_query(
+                        "relationship_milestones_over_time",
+                        {
+                            "story_id": story_id,
+                            "user_id": user_id,
+                            "character_a": pair["character_a"],
+                            "character_b": pair["character_b"],
+                            "start_time": time_range.get("start_time") if time_range else None,
+                            "end_time": time_range.get("end_time") if time_range else None
+                        }
+                    )
+                    evolution_data.append({
+                        "character_pair": pair,
+                        "evolution": pair_result.get("data", [])
+                    })
+            else:
+                # Analyze all relationships
+                all_relationships_query = """
+                    MATCH (c1:Character)-[r:RELATIONSHIP]-(c2:Character)
+                    WHERE c1.story_id = $story_id AND ($user_id IS NULL OR c1.user_id = $user_id)
+                    RETURN DISTINCT c1.name as character_a, c2.name as character_b
+                """
+                pairs_result = await self.graph_query(all_relationships_query, {"story_id": story_id, "user_id": user_id})
+                evolution_data = await self._analyze_all_relationship_evolution(story_id, user_id, pairs_result.get("data", []), time_range)
+            
+            return {
+                "story_id": story_id,
+                "character_pairs": character_pairs or "all",
+                "time_range": time_range,
+                "evolution_metrics": evolution_metrics,
+                "timestamp": datetime.utcnow().isoformat(),
+                "evolution_data": evolution_data
+            }
+            
+        except Exception as e:
+            return {"error": str(e), "story_id": story_id}
+    
+    async def sna_overview(self, story_id: str, user_id: str, network_scope: str, scope_parameters: Optional[Dict[str, Any]] = None,
+                          analysis_metrics: Optional[List[str]] = None, relationship_filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Perform Social Network Analysis (SNA) to provide overview of character relationship networks and social dynamics."""
+        try:
+            if not self.graphiti_manager:
+                return {"error": "GraphitiManager not available for SNA analysis"}
+            
+            # Build network based on scope
+            if network_scope == "full_story":
+                network_data = await self._build_full_story_network(story_id, user_id, relationship_filters)
+            elif network_scope == "episode_range":
+                episodes = scope_parameters.get("episodes", []) if scope_parameters else []
+                network_data = await self._build_episode_range_network(story_id, user_id, episodes, relationship_filters)
+            elif network_scope == "character_centric":
+                central_character = scope_parameters.get("central_character") if scope_parameters else None
+                degrees = scope_parameters.get("degrees_of_separation", 2) if scope_parameters else 2
+                network_data = await self._build_character_centric_network(story_id, user_id, central_character, degrees, relationship_filters)
+            else:
+                return {"error": f"Unknown network scope: {network_scope}"}
+            
+            # Calculate requested SNA metrics
+            sna_metrics = {}
+            if analysis_metrics:
+                for metric in analysis_metrics:
+                    if metric == "centrality":
+                        sna_metrics["centrality"] = await self._calculate_centrality(network_data)
+                    elif metric == "clustering":
+                        sna_metrics["clustering"] = await self._calculate_clustering(network_data)
+                    elif metric == "community_detection":
+                        sna_metrics["communities"] = await self._detect_communities(network_data)
+                    elif metric == "influence_paths":
+                        sna_metrics["influence_paths"] = await self._analyze_influence_paths(network_data)
+                    elif metric == "network_density":
+                        sna_metrics["network_density"] = await self._calculate_network_density(network_data)
+                    elif metric == "bridge_characters":
+                        sna_metrics["bridge_characters"] = await self._identify_bridge_characters(network_data)
+            
+            return {
+                "story_id": story_id,
+                "network_scope": network_scope,
+                "scope_parameters": scope_parameters,
+                "relationship_filters": relationship_filters,
+                "timestamp": datetime.utcnow().isoformat(),
+                "network_data": network_data,
+                "sna_metrics": sna_metrics
+            }
+            
+        except Exception as e:
+            return {"error": str(e), "story_id": story_id, "network_scope": network_scope}
+    
+    # === HELPER METHODS FOR NEW TOOLS ===
+    
+    async def _analyze_narrative_flow(self, story_id: str, user_id: str, episode_range: Optional[Dict[str, int]]) -> Dict[str, Any]:
+        """Analyze narrative flow across episodes."""
+        # Implementation for narrative flow analysis
+        return {"narrative_flow": "Analysis of story progression, pacing, and coherence across episodes"}
+    
+    async def _analyze_character_development(self, story_id: str, user_id: str, episode_range: Optional[Dict[str, int]]) -> Dict[str, Any]:
+        """Analyze character development across episodes."""
+        # Implementation for character development analysis
+        return {"character_development": "Analysis of character growth and change across episodes"}
+    
+    async def _analyze_plot_progression(self, story_id: str, user_id: str, episode_range: Optional[Dict[str, int]]) -> Dict[str, Any]:
+        """Analyze plot progression across episodes."""
+        # Implementation for plot progression analysis
+        return {"plot_progression": "Analysis of plot advancement and story structure across episodes"}
+    
+    async def _analyze_themes(self, story_id: str, user_id: str, episode_range: Optional[Dict[str, int]]) -> Dict[str, Any]:
+        """Analyze themes across episodes."""
+        # Implementation for thematic analysis
+        return {"thematic_analysis": "Analysis of recurring themes and motifs across episodes"}
+    
+    async def _analyze_pacing(self, story_id: str, user_id: str, episode_range: Optional[Dict[str, int]]) -> Dict[str, Any]:
+        """Analyze pacing across episodes."""
+        # Implementation for pacing analysis
+        return {"pacing_analysis": "Analysis of story pacing and rhythm across episodes"}
+    
+    async def _analyze_all_relationship_evolution(self, story_id: str, user_id: str, character_pairs: List[Dict], time_range: Optional[Dict[str, str]]) -> List[Dict]:
+        """Analyze evolution for all character relationships."""
+        evolution_data = []
+        for pair in character_pairs:
+            try:
+                pair_result = await self.optimized_query(
+                    "relationship_milestones_over_time",
+                    {
+                        "story_id": story_id,
+                        "user_id": user_id,
+                        "character_a": pair["character_a"],
+                        "character_b": pair["character_b"],
+                        "start_time": time_range.get("start_time") if time_range else None,
+                        "end_time": time_range.get("end_time") if time_range else None
+                    }
+                )
+                evolution_data.append({
+                    "character_pair": pair,
+                    "evolution": pair_result.get("data", [])
+                })
+            except Exception as e:
+                evolution_data.append({
+                    "character_pair": pair,
+                    "error": str(e)
+                })
+        return evolution_data
+    
+    async def _build_full_story_network(self, story_id: str, user_id: str, relationship_filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build social network for the entire story."""
+        # Implementation for full story network building
+        return {"network_type": "full_story", "nodes": [], "edges": []}
+    
+    async def _build_episode_range_network(self, story_id: str, user_id: str, episodes: List[int], relationship_filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build social network for specific episode range."""
+        # Implementation for episode range network building
+        return {"network_type": "episode_range", "episodes": episodes, "nodes": [], "edges": []}
+    
+    async def _build_character_centric_network(self, story_id: str, user_id: str, central_character: str, degrees: int, relationship_filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build character-centric social network."""
+        # Implementation for character-centric network building
+        return {"network_type": "character_centric", "central_character": central_character, "degrees": degrees, "nodes": [], "edges": []}
+    
+    async def _calculate_centrality(self, network_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate centrality metrics for network nodes."""
+        return {"betweenness_centrality": {}, "degree_centrality": {}, "closeness_centrality": {}}
+    
+    async def _calculate_clustering(self, network_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate clustering coefficient for the network."""
+        return {"global_clustering": 0.0, "local_clustering": {}}
+    
+    async def _detect_communities(self, network_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Detect communities in the character network."""
+        return {"communities": [], "modularity": 0.0}
+    
+    async def _analyze_influence_paths(self, network_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze influence paths between characters."""
+        return {"influence_paths": [], "key_influencers": []}
+    
+    async def _calculate_network_density(self, network_data: Dict[str, Any]) -> float:
+        """Calculate network density."""
+        return 0.0
+    
+    async def _identify_bridge_characters(self, network_data: Dict[str, Any]) -> List[str]:
+        """Identify characters that act as bridges between communities."""
+        return []

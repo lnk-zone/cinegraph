@@ -6,11 +6,12 @@ This module handles the processing of story content to extract entities,
 relationships, and other structured data for the knowledge graph.
 """
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 import asyncio
 import uuid
 import re
+import json
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.edges import EntityEdge
@@ -18,7 +19,7 @@ from graphiti_core.search.search import SearchConfig
 from neo4j import AsyncGraphDatabase
 
 from .graphiti_manager import GraphitiManager
-from .models import EntityType, RelationshipType
+from .models import EntityType, RelationshipType, ContinuityEdge
 
 
 class StoryProcessor:
@@ -27,13 +28,15 @@ class StoryProcessor:
     Implements story ingestion pipeline with Graphiti's /extract endpoint.
     """
     
-    def __init__(self, graphiti_manager: Optional[GraphitiManager] = None):
+    def __init__(self, graphiti_manager: Optional[GraphitiManager] = None, cinegraph_agent=None):
         """Initialize the story processor.
         
         Args:
             graphiti_manager: Optional GraphitiManager instance. If None, creates new one.
+            cinegraph_agent: CinegraphAgent instance for AI-powered analysis
         """
         self.graphiti_manager = graphiti_manager or GraphitiManager()
+        self.cinegraph_agent = cinegraph_agent
         self._scene_mappings: Dict[str, str] = {}  # text_segment_id -> scene_id
         self._processing_stats = {
             "total_processed": 0,
@@ -61,8 +64,11 @@ class StoryProcessor:
             # Step 1: Split content into manageable scenes/paragraphs
             scenes = self._split_into_scenes(content)
             
-            # Step 2: Process each scene through Graphiti extraction
-            extracted_data = await self._extract_with_graphiti(scenes, story_id, user_id)
+            # Step 2: Use CinegraphAgent for enhanced processing if available
+            if self.cinegraph_agent:
+                extracted_data = await self._process_with_agent(scenes, story_id, user_id)
+            else:
+                extracted_data = await self._extract_with_graphiti(scenes, story_id, user_id)
             
             # Step 3: Map extraction output to schema and upsert
             await self._map_and_upsert_entities(extracted_data, story_id, user_id)
@@ -84,6 +90,7 @@ class StoryProcessor:
                 "relationships": extracted_data.get("relationships", []),
                 "scenes": extracted_data.get("scenes", []),
                 "knowledge_items": extracted_data.get("knowledge_items", []),
+                "continuity_edges": extracted_data.get("continuity_edges", []),
                 "traceability_mappings": dict(self._scene_mappings),
                 "metadata": {
                     "word_count": len(content.split()),
@@ -108,13 +115,13 @@ class StoryProcessor:
     
     def _split_into_scenes(self, content: str) -> List[Dict[str, Any]]:
         """
-        Split content into scenes/paragraphs for processing.
+        Split content into basic scenes/paragraphs for processing.
         
         Args:
             content: Raw story content
             
         Returns:
-            List of scene dictionaries with metadata
+            List of scene dictionaries with basic metadata
         """
         # Split by double newlines or scene markers
         paragraphs = re.split(r'\n\s*\n|\n\s*---\s*\n|\n\s*\*\*\*\s*\n', content.strip())
@@ -134,6 +141,469 @@ class StoryProcessor:
         
         return scenes
     
+    async def _process_with_agent(self, scenes: List[Dict[str, Any]], story_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Process scenes using CinegraphAgent for enhanced analysis.
+        
+        Args:
+            scenes: List of scene dictionaries
+            story_id: Story identifier
+            user_id: User ID for data isolation
+            
+        Returns:
+            Dict containing processed data with enhanced metadata
+        """
+        try:
+            # Use CinegraphAgent to analyze scenes
+            agent_analysis = await self.cinegraph_agent.analyze_scenes(
+                scenes=scenes,
+                story_id=story_id,
+                user_id=user_id
+            )
+            
+            return agent_analysis
+            
+        except Exception as e:
+            print(f"Warning: Agent processing failed, falling back to basic extraction: {e}")
+            # Fallback to basic extraction if agent fails
+            return await self._extract_with_graphiti(scenes, story_id, user_id)
+    
+    def _detect_chapter_boundaries(self, text: str) -> Dict[str, Any]:
+        """
+        Detect chapter boundaries using simple NLP heuristics.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Dict with chapter boundary information
+        """
+        chapter_patterns = [
+            r'^\s*(chapter|ch\.?)\s+\d+',
+            r'^\s*(part|book)\s+\d+',
+            r'^\s*\d+\s*$',  # Standalone numbers
+            r'^\s*[IVX]+\s*$',  # Roman numerals
+        ]
+        
+        is_new_chapter = any(re.match(pattern, text, re.IGNORECASE) for pattern in chapter_patterns)
+        
+        # Additional heuristics
+        is_title_like = len(text.split()) <= 5 and text.isupper()
+        has_time_jump = bool(re.search(r'\b(years? later|months? later|days? later|meanwhile|elsewhere)\b', text, re.IGNORECASE))
+        
+        return {
+            "is_new_chapter": is_new_chapter or is_title_like,
+            "confidence": 0.9 if is_new_chapter else (0.7 if is_title_like else 0.3),
+            "indicators": {
+                "pattern_match": is_new_chapter,
+                "title_like": is_title_like,
+                "time_jump": has_time_jump
+            }
+        }
+    
+    def _detect_episode_boundaries(self, text: str, scene_index: int, total_scenes: int) -> Dict[str, Any]:
+        """
+        Detect episode boundaries within chapters.
+        
+        Args:
+            text: Text to analyze
+            scene_index: Current scene index
+            total_scenes: Total number of scenes
+            
+        Returns:
+            Dict with episode boundary information
+        """
+        episode_indicators = [
+            r'\b(scene|act)\s+\d+\b',
+            r'\b(cut to|fade to|dissolve to)\b',
+            r'\b(meanwhile|elsewhere|at the same time)\b',
+            r'\b(hours? later|minutes? later|soon after)\b'
+        ]
+        
+        has_indicator = any(re.search(pattern, text, re.IGNORECASE) for pattern in episode_indicators)
+        
+        # Heuristic: longer scenes or significant location/POV shifts might be new episodes
+        word_count = len(text.split())
+        is_long_scene = word_count > 300  # Threshold for scene length
+        
+        # Natural breakpoints (every 3-5 scenes, depending on length)
+        natural_break = scene_index > 0 and scene_index % 4 == 0
+        
+        is_new_episode = has_indicator or (is_long_scene and natural_break)
+        
+        return {
+            "is_new_episode": is_new_episode,
+            "confidence": 0.8 if has_indicator else (0.6 if is_long_scene else 0.4),
+            "indicators": {
+                "explicit_marker": has_indicator,
+                "length_based": is_long_scene,
+                "natural_break": natural_break
+            }
+        }
+    
+    def _detect_story_arc(self, text: str) -> Dict[str, Any]:
+        """
+        Detect story arc elements using NLP heuristics.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Dict with story arc information
+        """
+        # Story arc patterns
+        exposition_patterns = [r'\b(introduce|meet|background|setting|world)\b']
+        rising_action_patterns = [r'\b(conflict|problem|challenge|discover)\b']
+        climax_patterns = [r'\b(battle|fight|confrontation|crisis|decisive)\b']
+        falling_action_patterns = [r'\b(aftermath|consequence|result|resolve)\b']
+        resolution_patterns = [r'\b(end|conclude|peace|happy|reunion)\b']
+        
+        arc_scores = {
+            "exposition": sum(len(re.findall(p, text, re.IGNORECASE)) for p in exposition_patterns),
+            "rising_action": sum(len(re.findall(p, text, re.IGNORECASE)) for p in rising_action_patterns),
+            "climax": sum(len(re.findall(p, text, re.IGNORECASE)) for p in climax_patterns),
+            "falling_action": sum(len(re.findall(p, text, re.IGNORECASE)) for p in falling_action_patterns),
+            "resolution": sum(len(re.findall(p, text, re.IGNORECASE)) for p in resolution_patterns)
+        }
+        
+        # Determine primary arc element
+        primary_arc = max(arc_scores, key=arc_scores.get) if any(arc_scores.values()) else "neutral"
+        
+        return {
+            "primary_arc": primary_arc,
+            "arc_scores": arc_scores,
+            "intensity": max(arc_scores.values()) if arc_scores.values() else 0
+        }
+    
+    def _detect_pov(self, text: str) -> Dict[str, Any]:
+        """
+        Detect point of view using NLP analysis.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Dict with POV information
+        """
+        # Count pronoun usage
+        first_person = len(re.findall(r'\b(I|me|my|mine|we|us|our|ours)\b', text, re.IGNORECASE))
+        second_person = len(re.findall(r'\b(you|your|yours)\b', text, re.IGNORECASE))
+        third_person = len(re.findall(r'\b(he|him|his|she|her|hers|they|them|their|theirs)\b', text, re.IGNORECASE))
+        
+        total_pronouns = first_person + second_person + third_person
+        
+        if total_pronouns == 0:
+            return {"type": "unknown", "confidence": 0.0, "pronouns": {"first": 0, "second": 0, "third": 0}}
+        
+        # Determine POV type
+        if first_person / total_pronouns > 0.4:
+            pov_type = "first_person"
+            confidence = first_person / total_pronouns
+        elif second_person / total_pronouns > 0.3:
+            pov_type = "second_person"
+            confidence = second_person / total_pronouns
+        else:
+            pov_type = "third_person"
+            confidence = third_person / total_pronouns
+        
+        return {
+            "type": pov_type,
+            "confidence": confidence,
+            "pronouns": {
+                "first": first_person,
+                "second": second_person,
+                "third": third_person
+            }
+        }
+    
+    async def _analyze_mood_and_significance(self, scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Analyze mood using OpenAI sentiment and significance using TF-IDF.
+        
+        Args:
+            scenes: List of scene dictionaries
+            
+        Returns:
+            List of scenes with mood and significance analysis
+        """
+        enhanced_scenes = []
+        
+        # Collect all text for TF-IDF analysis
+        all_texts = [scene["text"] for scene in scenes]
+        
+        for i, scene in enumerate(scenes):
+            enhanced_scene = scene.copy()
+            
+            # Mood analysis using OpenAI sentiment
+            mood_analysis = await self._analyze_mood_openai(scene["text"])
+            enhanced_scene["mood"] = mood_analysis
+            
+            # Significance analysis using TF-IDF
+            significance_analysis = self._analyze_significance_tfidf(scene["text"], all_texts, i)
+            enhanced_scene["significance"] = significance_analysis
+            
+            enhanced_scenes.append(enhanced_scene)
+        
+        return enhanced_scenes
+    
+    async def _analyze_mood_openai(self, text: str) -> Dict[str, Any]:
+        """
+        Analyze mood using OpenAI sentiment analysis.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Dict with mood analysis
+        """
+        if not self.openai_client:
+            # Fallback to simple lexical analysis
+            return self._analyze_mood_lexical(text)
+        
+        try:
+            response = await self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Analyze the mood and emotional tone of the given text. Respond with a JSON object containing 'primary_mood' (happy, sad, tense, peaceful, dramatic, mysterious, romantic, action), 'intensity' (0.0-1.0), and 'secondary_moods' (array of up to 2 additional moods)."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Analyze the mood of this text: {text[:500]}"  # Limit to 500 chars
+                    }
+                ],
+                max_tokens=100,
+                temperature=0.3
+            )
+            
+            try:
+                mood_data = json.loads(response.choices[0].message.content)
+                return {
+                    "primary_mood": mood_data.get("primary_mood", "neutral"),
+                    "intensity": mood_data.get("intensity", 0.5),
+                    "secondary_moods": mood_data.get("secondary_moods", []),
+                    "method": "openai"
+                }
+            except json.JSONDecodeError:
+                # Fallback if JSON parsing fails
+                return self._analyze_mood_lexical(text)
+        
+        except Exception as e:
+            print(f"Warning: OpenAI mood analysis failed: {e}")
+            return self._analyze_mood_lexical(text)
+    
+    def _analyze_mood_lexical(self, text: str) -> Dict[str, Any]:
+        """
+        Fallback mood analysis using lexical patterns.
+        
+        Args:
+            text: Text to analyze
+            
+        Returns:
+            Dict with mood analysis
+        """
+        mood_keywords = {
+            "happy": ["joy", "happy", "pleased", "delighted", "cheerful", "smile", "laugh"],
+            "sad": ["sad", "sorrow", "grief", "melancholy", "despair", "cry", "tear"],
+            "tense": ["tension", "suspense", "anxious", "worried", "nervous", "fear"],
+            "dramatic": ["dramatic", "intense", "powerful", "striking", "significant"],
+            "mysterious": ["mystery", "secret", "hidden", "unknown", "enigma", "puzzle"],
+            "action": ["fight", "battle", "run", "chase", "attack", "escape", "rush"]
+        }
+        
+        mood_scores = {}
+        text_lower = text.lower()
+        
+        for mood, keywords in mood_keywords.items():
+            score = sum(text_lower.count(keyword) for keyword in keywords)
+            mood_scores[mood] = score
+        
+        primary_mood = max(mood_scores, key=mood_scores.get) if any(mood_scores.values()) else "neutral"
+        max_score = max(mood_scores.values()) if mood_scores.values() else 0
+        intensity = min(max_score / 3.0, 1.0)  # Normalize to 0-1
+        
+        return {
+            "primary_mood": primary_mood,
+            "intensity": intensity,
+            "secondary_moods": [],
+            "method": "lexical"
+        }
+    
+    def _analyze_significance_tfidf(self, text: str, all_texts: List[str], current_index: int) -> Dict[str, Any]:
+        """
+        Analyze significance using TF-IDF against the narrative.
+        
+        Args:
+            text: Current text to analyze
+            all_texts: All texts in the narrative
+            current_index: Index of current text
+            
+        Returns:
+            Dict with significance analysis
+        """
+        if not self.nlp:
+            return {"significance_score": 0.5, "key_terms": [], "method": "unavailable"}
+        
+        try:
+            # Simple TF-IDF implementation
+            doc = self.nlp(text)
+            
+            # Extract meaningful tokens (nouns, verbs, adjectives)
+            tokens = [token.lemma_.lower() for token in doc if token.pos_ in ["NOUN", "VERB", "ADJ"] and not token.is_stop and len(token.text) > 2]
+            
+            if not tokens:
+                return {"significance_score": 0.3, "key_terms": [], "method": "tfidf"}
+            
+            # Calculate term frequencies
+            tf = Counter(tokens)
+            total_tokens = len(tokens)
+            tf_scores = {term: count / total_tokens for term, count in tf.items()}
+            
+            # Calculate document frequencies (simple version)
+            df = {}
+            for term in tf_scores:
+                df[term] = sum(1 for other_text in all_texts if term in other_text.lower())
+            
+            # Calculate TF-IDF scores
+            tfidf_scores = {}
+            for term, tf_score in tf_scores.items():
+                idf = len(all_texts) / (df[term] + 1)  # +1 to avoid division by zero
+                tfidf_scores[term] = tf_score * idf
+            
+            # Get top terms
+            top_terms = sorted(tfidf_scores.items(), key=lambda x: x[1], reverse=True)[:5]
+            
+            # Calculate overall significance score
+            significance_score = min(sum(score for _, score in top_terms) / 5.0, 1.0) if top_terms else 0.3
+            
+            return {
+                "significance_score": significance_score,
+                "key_terms": [term for term, _ in top_terms],
+                "tfidf_scores": dict(top_terms),
+                "method": "tfidf"
+            }
+        
+        except Exception as e:
+            print(f"Warning: TF-IDF analysis failed: {e}")
+            return {"significance_score": 0.5, "key_terms": [], "method": "error"}
+    
+    def _detect_continuity_callbacks(self, scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Detect foreshadowing and callback phrases for continuity edges.
+        
+        Args:
+            scenes: List of scene dictionaries
+            
+        Returns:
+            List of continuity edge dictionaries
+        """
+        continuity_edges = []
+        
+        for i, scene in enumerate(scenes):
+            text = scene["text"]
+            
+            # Check for continuity patterns
+            for pattern_idx, pattern in enumerate(self.compiled_patterns):
+                matches = pattern.finditer(text)
+                
+                for match in matches:
+                    # Look for references to other scenes
+                    for j, other_scene in enumerate(scenes):
+                        if i == j:  # Skip self-references
+                            continue
+                        
+                        # Simple similarity check for callbacks
+                        if self._check_callback_similarity(scene, other_scene, match.group()):
+                            edge_id = f"continuity_{uuid.uuid4().hex[:8]}"
+                            
+                            continuity_edge = {
+                                "id": edge_id,
+                                "type": "CONTINUITY",
+                                "from_scene_id": scene["id"],
+                                "to_scene_id": other_scene["id"],
+                                "properties": {
+                                    "callback_phrase": match.group(),
+                                    "pattern_type": f"pattern_{pattern_idx}",
+                                    "confidence": self._calculate_continuity_confidence(scene, other_scene, match.group()),
+                                    "scene_order_diff": abs(i - j),
+                                    "detected_at": datetime.utcnow().isoformat()
+                                }
+                            }
+                            
+                            continuity_edges.append(continuity_edge)
+        
+        return continuity_edges
+    
+    def _check_callback_similarity(self, scene1: Dict[str, Any], scene2: Dict[str, Any], phrase: str) -> bool:
+        """
+        Check if two scenes have callback similarity.
+        
+        Args:
+            scene1: First scene
+            scene2: Second scene
+            phrase: Matched phrase
+            
+        Returns:
+            Boolean indicating if there's a callback similarity
+        """
+        if not self.nlp:
+            # Simple keyword matching fallback
+            words1 = set(scene1["text"].lower().split())
+            words2 = set(scene2["text"].lower().split())
+            common_words = words1.intersection(words2)
+            return len(common_words) >= 3  # At least 3 common words
+        
+        try:
+            # Use spaCy for semantic similarity
+            doc1 = self.nlp(scene1["text"][:200])  # Limit for performance
+            doc2 = self.nlp(scene2["text"][:200])
+            
+            similarity = doc1.similarity(doc2)
+            return similarity > 0.3  # Threshold for semantic similarity
+        
+        except Exception:
+            # Fallback to keyword matching
+            words1 = set(scene1["text"].lower().split())
+            words2 = set(scene2["text"].lower().split())
+            common_words = words1.intersection(words2)
+            return len(common_words) >= 3
+    
+    def _calculate_continuity_confidence(self, scene1: Dict[str, Any], scene2: Dict[str, Any], phrase: str) -> float:
+        """
+        Calculate confidence score for continuity edge.
+        
+        Args:
+            scene1: First scene
+            scene2: Second scene
+            phrase: Matched phrase
+            
+        Returns:
+            Confidence score between 0 and 1
+        """
+        base_confidence = 0.6
+        
+        # Boost confidence for explicit temporal references
+        if any(word in phrase.lower() for word in ["remember", "recalled", "earlier", "before", "later", "future"]):
+            base_confidence += 0.2
+        
+        # Boost confidence for character mentions
+        if self.nlp:
+            try:
+                doc1 = self.nlp(scene1["text"])
+                doc2 = self.nlp(scene2["text"])
+                
+                # Extract person entities
+                persons1 = {ent.text.lower() for ent in doc1.ents if ent.label_ == "PERSON"}
+                persons2 = {ent.text.lower() for ent in doc2.ents if ent.label_ == "PERSON"}
+                
+                if persons1.intersection(persons2):
+                    base_confidence += 0.1
+            except Exception:
+                pass
+        
+        return min(base_confidence, 1.0)
+    
     async def _extract_with_graphiti(self, scenes: List[Dict[str, Any]], story_id: str, user_id: str) -> Dict[str, Any]:
         """
         Extract entities, relations, and timestamps using Graphiti's capabilities.
@@ -149,6 +619,12 @@ class StoryProcessor:
         if not self.graphiti_manager.client:
             await self.graphiti_manager.connect()
         
+        # Enhance scenes with mood and significance analysis
+        enhanced_scenes = await self._analyze_mood_and_significance(scenes)
+        
+        # Detect continuity edges
+        continuity_edges = self._detect_continuity_callbacks(enhanced_scenes)
+        
         all_entities = []
         all_relationships = []
         all_scenes = []
@@ -158,13 +634,16 @@ class StoryProcessor:
         # Get or create story session
         session_id = await self.graphiti_manager.create_story_session(story_id)
         
-        for scene in scenes:
+        for scene in enhanced_scenes:
             try:
+                # Create enhanced episode name with chapter/episode info
+                episode_name = f"Ch{scene['chapter']}.Ep{scene['episode']} - Scene {scene['order']} - {story_id}"
+                
                 # Use Graphiti's add_episode for extraction (acts as /extract endpoint)
                 episode_result = await self.graphiti_manager.client.add_episode(
-                    name=f"Scene {scene['order']} - {story_id}",
+                    name=episode_name,
                     episode_body=scene['text'],
-                    source_description=f"Scene {scene['order']} from story {story_id}",
+                    source_description=f"Chapter {scene['chapter']}, Episode {scene['episode']}, Scene {scene['order']} from story {story_id}",
                     reference_time=datetime.utcnow(),
                     group_id=session_id
                 )
@@ -214,9 +693,10 @@ class StoryProcessor:
                             episode_id = getattr(episode_result, attr_name)
                             break
                 
+                # Enhanced scene entity with new metadata
                 scene_entity = {
                     "id": scene['id'],
-                    "name": f"Scene {scene['order']}",
+                    "name": f"Ch{scene['chapter']}.Ep{scene['episode']} - Scene {scene['order']}",
                     "type": "SCENE",
                     "properties": {
                         "order": scene['order'],
@@ -225,6 +705,14 @@ class StoryProcessor:
                         "story_id": story_id,
                         "user_id": user_id,
                         "episode_id": episode_id,
+                        "chapter": scene['chapter'],
+                        "episode": scene['episode'],
+                        "chapter_boundary": scene['chapter_boundary'],
+                        "episode_boundary": scene['episode_boundary'],
+                        "story_arc": scene['story_arc'],
+                        "pov": scene['pov'],
+                        "mood": scene.get('mood', {}),
+                        "significance": scene.get('significance', {}),
                         "created_at": datetime.utcnow().isoformat()
                     }
                 }
@@ -247,6 +735,7 @@ class StoryProcessor:
             "relationships": all_relationships,
             "scenes": all_scenes,
             "knowledge_items": all_knowledge_items,
+            "continuity_edges": continuity_edges,
             "scene_errors": scene_errors  # Include errors in the result
         }
     
@@ -414,6 +903,28 @@ class StoryProcessor:
                 from_id=relationship["from_id"],
                 to_id=relationship["to_id"],
                 properties=relationship["properties"]
+            )
+    
+    async def _create_continuity_edges(self, continuity_edges: List[Dict[str, Any]], story_id: str, user_id: str) -> None:
+        """
+        Create continuity edges for foreshadowing and callbacks.
+        
+        Args:
+            continuity_edges: List of continuity edge dictionaries
+            story_id: Story identifier
+            user_id: User ID for data isolation
+        """
+        for edge in continuity_edges:
+            # Add story and user context to properties
+            edge["properties"]["story_id"] = story_id
+            edge["properties"]["user_id"] = user_id
+            
+            # Create the continuity relationship
+            await self.graphiti_manager.upsert_relationship(
+                relationship_type="CONTINUITY",
+                from_id=edge["from_scene_id"],
+                to_id=edge["to_scene_id"],
+                properties=edge["properties"]
             )
     
     def _store_traceability_mappings(self, scenes: List[Dict[str, Any]], extracted_data: Dict[str, Any]) -> None:
