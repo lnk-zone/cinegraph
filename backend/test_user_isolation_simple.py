@@ -6,13 +6,18 @@ Simple test script to verify user isolation implementation without heavy depende
 import sys
 import os
 import re
+from pathlib import Path
+
+# Resolve repository root based on this file's location
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 def test_story_input_model():
     """Test that StoryInput model includes user_id field"""
     print("Testing StoryInput model...")
     
     # Read the models file
-    with open('/Users/shachiakyaagba/Desktop/cinegraph/backend/core/models.py', 'r') as f:
+    models_file = REPO_ROOT / 'backend' / 'core' / 'models.py'
+    with open(models_file, 'r') as f:
         models_content = f.read()
     
     # Check if StoryInput has user_id field
@@ -38,7 +43,8 @@ def test_graphiti_manager_methods():
     print("Testing GraphitiManager methods...")
     
     # Read the graphiti_manager file
-    with open('/Users/shachiakyaagba/Desktop/cinegraph/backend/core/graphiti_manager.py', 'r') as f:
+    manager_file = REPO_ROOT / 'backend' / 'core' / 'graphiti_manager.py'
+    with open(manager_file, 'r') as f:
         manager_content = f.read()
     
     # Check key methods for user_id parameter
@@ -67,7 +73,8 @@ def test_story_processor_methods():
     print("Testing StoryProcessor methods...")
     
     # Read the story_processor file
-    with open('/Users/shachiakyaagba/Desktop/cinegraph/backend/core/story_processor.py', 'r') as f:
+    processor_file = REPO_ROOT / 'backend' / 'core' / 'story_processor.py'
+    with open(processor_file, 'r') as f:
         processor_content = f.read()
     
     # Check process_story method for user_id parameter
@@ -85,7 +92,8 @@ def test_api_endpoints():
     print("Testing API endpoints...")
     
     # Read the main.py file
-    with open('/Users/shachiakyaagba/Desktop/cinegraph/backend/app/main.py', 'r') as f:
+    main_file = REPO_ROOT / 'backend' / 'app' / 'main.py'
+    with open(main_file, 'r') as f:
         main_content = f.read()
     
     # Check that endpoints pass current_user.id
@@ -117,7 +125,8 @@ def test_query_filtering():
     print("Testing query filtering...")
     
     # Read the graphiti_manager file
-    with open('/Users/shachiakyaagba/Desktop/cinegraph/backend/core/graphiti_manager.py', 'r') as f:
+    manager_file = REPO_ROOT / 'backend' / 'core' / 'graphiti_manager.py'
+    with open(manager_file, 'r') as f:
         manager_content = f.read()
     
     # Check for user_id filtering in queries
@@ -141,7 +150,8 @@ def test_auth_configuration():
     print("Testing authentication configuration...")
     
     # Read the auth.py file
-    with open('/Users/shachiakyaagba/Desktop/cinegraph/backend/app/auth.py', 'r') as f:
+    auth_file = REPO_ROOT / 'backend' / 'app' / 'auth.py'
+    with open(auth_file, 'r') as f:
         auth_content = f.read()
     
     # Check for SUPABASE_SERVICE_ROLE_KEY
@@ -159,7 +169,8 @@ def test_temporal_contradiction_detection():
     print("Testing temporal contradiction detection...")
     
     # Read the temporal_contradiction_detection.py file
-    with open('/Users/shachiakyaagba/Desktop/cinegraph/backend/tasks/temporal_contradiction_detection.py', 'r') as f:
+    detection_file = REPO_ROOT / 'backend' / 'tasks' / 'temporal_contradiction_detection.py'
+    with open(detection_file, 'r') as f:
         detection_content = f.read()
     
     # Check for user_id in scan_story_contradictions
