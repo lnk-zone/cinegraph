@@ -17,6 +17,10 @@ from core.redis_alerts import alert_manager
 from core.models import TemporalQuery
 from supabase import create_client, Client
 
+from .query_tools import GraphQueryTools
+from .alert_manager import AlertManager
+from .story_analysis_agent import StoryAnalysisAgent
+
 
 class DialoguePatternExtractor:
     """
@@ -152,7 +156,7 @@ class SNARelationshipExtractor:
             return "MENTIONED_WITH"  # Very weak relationship
 
 
-class CineGraphAgent:
+class CineGraphAgent(StoryAnalysisAgent, AlertManager, GraphQueryTools):
     """
     AI-powered agent for story consistency validation, querying, and analysis.
     Enhanced with advanced Cypher capabilities, query optimization, and schema awareness.

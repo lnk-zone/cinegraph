@@ -16,6 +16,9 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 from agents.cinegraph_agent import CineGraphAgent
+from agents.query_tools import GraphQueryTools
+from agents.alert_manager import AlertManager
+from agents.story_analysis_agent import StoryAnalysisAgent
 try:
     from agents.agent_factory import create_cinegraph_agent, initialize_cinegraph_agent
 except ImportError:
@@ -27,6 +30,13 @@ except ImportError:
 
 from core.graphiti_manager import GraphitiManager
 from core.models import GraphitiConfig
+
+
+def test_agent_inherits_mixins():
+    """Ensure CineGraphAgent inherits the new mixin classes."""
+    assert issubclass(CineGraphAgent, StoryAnalysisAgent)
+    assert issubclass(CineGraphAgent, AlertManager)
+    assert issubclass(CineGraphAgent, GraphQueryTools)
 
 
 class TestCineGraphAgent:
