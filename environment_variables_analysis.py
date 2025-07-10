@@ -13,14 +13,19 @@ The results are stored in structured Python sets for cross-comparison.
 
 import os
 import re
-from typing import Dict, Set, List, Any
+import argparse
+from typing import Dict, Set, List, Any, Optional
 from pathlib import Path
 
 class EnvironmentVariableCollector:
     """Collector for environment variables from various sources."""
-    
-    def __init__(self, project_root: str = "/Users/shachiakyaagba/Desktop/cinegraph"):
-        self.project_root = Path(project_root)
+
+    def __init__(self, project_root: Optional[str] = None):
+        # Default to repository root if no path provided
+        if project_root is None:
+            self.project_root = Path(__file__).resolve().parent
+        else:
+            self.project_root = Path(project_root).resolve()
         self.env_vars: Dict[str, str] = {}
         self.env_example_vars: Dict[str, str] = {}
         self.code_referenced_vars: Set[str] = set()
@@ -309,7 +314,11 @@ class EnvironmentVariableCollector:
 
 def main():
     """Main function to run the analysis."""
-    collector = EnvironmentVariableCollector()
+    parser = argparse.ArgumentParser(description="Analyze environment variables in the project")
+    parser.add_argument("project_root", nargs="?", help="Path to the project root directory")
+    args = parser.parse_args()
+
+    collector = EnvironmentVariableCollector(args.project_root)
     collector.collect_all_sources()
     structured_data = collector.generate_structured_lists()
     collector.print_analysis_report(structured_data)
