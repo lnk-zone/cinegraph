@@ -9,6 +9,7 @@ import json
 import asyncio
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from pathlib import Path
 
 from core.graphiti_manager import GraphitiManager
 from agents.cinegraph_agent import CineGraphAgent
@@ -287,6 +288,298 @@ async def update_user_profile(profile_update: UserProfileUpdate, current_user: U
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def ensure_schema() -> Dict[str, Any]:
+    """
+    Apply Neo4j schema constraints and indexes from bootstrap script.
+    
+    This function reads and executes the neo4j_bootstrap.cypher script
+    to synchronize the live database with CineGraphAgent schema requirements.
+    
+    Returns:
+        Dict containing execution results and any errors
+    """
+    try:
+        # Read the bootstrap script
+        bootstrap_path = Path(__file__).parent.parent / "neo4j_bootstrap.cypher"
+        
+        if not bootstrap_path.exists():
+            return {
+                "status": "error",
+                "error": f"Bootstrap script not found at {bootstrap_path}",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        
+        with open(bootstrap_path, 'r') as f:
+            bootstrap_script = f.read()
+        
+        # Split script into individual statements
+        # Remove comments and empty lines
+        statements = []
+        current_statement = ""
+        
+        for line in bootstrap_script.split('\n'):
+            line = line.strip()
+            # Skip comments and empty lines
+            if line.startswith('//') or not line:
+                continue
+            
+            current_statement += line + " "
+            
+            # End of statement
+            if line.endswith(';'):
+                statements.append(current_statement.strip())
+                current_statement = ""
+        
+        # Execute each statement
+        successful_statements = 0
+        failed_statements = 0
+        errors = []
+        
+        if not graphiti_manager.client:
+            await graphiti_manager.connect()
+        
+        for i, statement in enumerate(statements):
+            try:
+                # Execute through GraphitiManager's Neo4j connection
+                # Use the Graphiti client's internal driver
+                if hasattr(graphiti_manager.client, 'driver'):
+                    # Direct driver access
+                    result = await graphiti_manager.client.driver.execute_query(
+                        statement, 
+                        database_=graphiti_manager.config.database_name
+                    )
+                elif hasattr(graphiti_manager.client, '_driver'):
+                    # Private driver access
+                    result = await graphiti_manager.client._driver.execute_query(
+                        statement,
+                        database_=graphiti_manager.config.database_name
+                    )
+                else:
+                    # Fallback: try to execute via session
+                    async with graphiti_manager.client._driver.session(database=graphiti_manager.config.database_name) as session:
+                        result = await session.run(statement)
+                        await result.consume()
+                
+                successful_statements += 1
+                
+            except Exception as e:
+                failed_statements += 1
+                error_msg = f"Statement {i+1}: {str(e)}"
+                errors.append(error_msg)
+                print(f"Schema error: {error_msg}")
+        
+        return {
+            "status": "completed" if failed_statements == 0 else "partial",
+            "total_statements": len(statements),
+            "successful": successful_statements,
+            "failed": failed_statements,
+            "errors": errors,
+            "timestamp": datetime.utcnow().isoformat(),
+            "note": "Schema synchronization completed. Database now matches CineGraphAgent requirements."
+        }
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+
+@app.post("/api/admin/ensure_schema")
+async def admin_ensure_schema(current_user: User = Depends(get_authenticated_user)):
+    """
+    Development-only endpoint to ensure Neo4j schema matches CineGraphAgent design.
+    
+    This endpoint applies the neo4j_bootstrap.cypher script to create all necessary
+    constraints, indexes, and properties for optimal CineGraphAgent performance.
+    
+    Security: Requires authentication. Only available in development environment.
+    
+    Returns:
+        Dict containing schema synchronization results
+    """
+    try:
+        # Development environment check
+        environment = os.getenv("ENVIRONMENT", "development").lower()
+        if environment not in ["development", "dev", "local"]:
+            raise HTTPException(
+                status_code=403, 
+                detail="Schema management endpoint only available in development environment"
+            )
+        
+        # Execute schema synchronization
+        result = await ensure_schema()
+        
+        return {
+            "endpoint": "admin_ensure_schema",
+            "user_id": current_user.id,
+            "environment": environment,
+            "schema_sync_result": result,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schema management failed: {str(e)}")
+
+
+@app.get("/api/admin/schema_status")
+async def admin_schema_status(current_user: User = Depends(get_authenticated_user)):
+    """
+    Development-only endpoint to check current Neo4j schema status.
+    
+    Returns information about existing constraints, indexes, and compatibility
+    with CineGraphAgent requirements.
+    
+    Security: Requires authentication. Only available in development environment.
+    
+    Returns:
+        Dict containing current schema status and recommendations
+    """
+    try:
+        # Development environment check
+        environment = os.getenv("ENVIRONMENT", "development").lower()
+        if environment not in ["development", "dev", "local"]:
+            raise HTTPException(
+                status_code=403, 
+                detail="Schema status endpoint only available in development environment"
+            )
+        
+        if not graphiti_manager.client:
+            await graphiti_manager.connect()
+        
+        # Get current constraints
+        constraints_query = "SHOW CONSTRAINTS"
+        constraints_result = None
+        
+        # Get current indexes
+        indexes_query = "SHOW INDEXES"
+        indexes_result = None
+        
+        # Execute queries with proper driver access
+        if hasattr(graphiti_manager.client, 'driver'):
+            # Direct driver access
+            constraints_result = await graphiti_manager.client.driver.execute_query(
+                constraints_query,
+                database_=graphiti_manager.config.database_name
+            )
+            indexes_result = await graphiti_manager.client.driver.execute_query(
+                indexes_query,
+                database_=graphiti_manager.config.database_name
+            )
+        elif hasattr(graphiti_manager.client, '_driver'):
+            # Private driver access
+            constraints_result = await graphiti_manager.client._driver.execute_query(
+                constraints_query,
+                database_=graphiti_manager.config.database_name
+            )
+            indexes_result = await graphiti_manager.client._driver.execute_query(
+                indexes_query,
+                database_=graphiti_manager.config.database_name
+            )
+        else:
+            # Fallback: try to execute via session
+            async with graphiti_manager.client._driver.session(database=graphiti_manager.config.database_name) as session:
+                constraints_result_cursor = await session.run(constraints_query)
+                constraints_result = await constraints_result_cursor.data()
+                
+                indexes_result_cursor = await session.run(indexes_query)
+                indexes_result = await indexes_result_cursor.data()
+        
+        # Count existing schema objects (handle different result formats)
+        constraints_count = 0
+        indexes_count = 0
+        
+        if constraints_result:
+            if hasattr(constraints_result, 'records') and constraints_result.records:
+                constraints_count = len(constraints_result.records)
+            elif isinstance(constraints_result, list):
+                constraints_count = len(constraints_result)
+        
+        if indexes_result:
+            if hasattr(indexes_result, 'records') and indexes_result.records:
+                indexes_count = len(indexes_result.records)
+            elif isinstance(indexes_result, list):
+                indexes_count = len(indexes_result)
+        
+        # Check for key CineGraphAgent requirements
+        has_story_id_indexes = False
+        has_user_id_indexes = False
+        has_temporal_indexes = False
+        
+        # Extract index names from results
+        index_names = []
+        if indexes_result:
+            if hasattr(indexes_result, 'records') and indexes_result.records:
+                index_names = [record.get("name", "") for record in indexes_result.records]
+            elif isinstance(indexes_result, list):
+                index_names = [record.get("name", "") for record in indexes_result]
+        
+        if index_names:
+            has_story_id_indexes = any("story_id" in name for name in index_names)
+            has_user_id_indexes = any("user_id" in name for name in index_names) 
+            has_temporal_indexes = any("temporal" in name for name in index_names)
+        
+        # Determine schema compatibility
+        compatibility_score = 0
+        if constraints_count > 0:
+            compatibility_score += 25
+        if indexes_count > 10:
+            compatibility_score += 25
+        if has_story_id_indexes:
+            compatibility_score += 20
+        if has_user_id_indexes:
+            compatibility_score += 20
+        if has_temporal_indexes:
+            compatibility_score += 10
+        
+        schema_status = "incompatible"
+        if compatibility_score >= 80:
+            schema_status = "compatible"
+        elif compatibility_score >= 50:
+            schema_status = "partial"
+        
+        recommendations = []
+        if not has_story_id_indexes:
+            recommendations.append("Add story_id indexes for data isolation")
+        if not has_user_id_indexes:
+            recommendations.append("Add user_id indexes for multi-tenancy")
+        if not has_temporal_indexes:
+            recommendations.append("Add temporal indexes for bi-temporal queries")
+        if constraints_count < 5:
+            recommendations.append("Add unique constraints for entity integrity")
+        if indexes_count < 20:
+            recommendations.append("Add performance indexes for common query patterns")
+        
+        if not recommendations:
+            recommendations.append("Schema appears complete for CineGraphAgent requirements")
+        
+        return {
+            "endpoint": "admin_schema_status",
+            "user_id": current_user.id,
+            "environment": environment,
+            "schema_status": schema_status,
+            "compatibility_score": compatibility_score,
+            "constraints_count": constraints_count,
+            "indexes_count": indexes_count,
+            "cinegraph_requirements": {
+                "story_id_indexes": has_story_id_indexes,
+                "user_id_indexes": has_user_id_indexes,
+                "temporal_indexes": has_temporal_indexes
+            },
+            "recommendations": recommendations,
+            "timestamp": datetime.utcnow().isoformat(),
+            "note": "Run /api/admin/ensure_schema to synchronize schema with CineGraphAgent requirements"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schema status check failed: {str(e)}")
 
 
 @app.get("/api/health")

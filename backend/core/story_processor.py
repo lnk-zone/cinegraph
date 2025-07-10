@@ -14,7 +14,8 @@ import re
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EntityNode, EpisodicNode
 from graphiti_core.edges import EntityEdge
-from graphiti_core.search.search_config import SearchConfig, EpisodeSearchConfig
+from graphiti_core.search.search import SearchConfig
+from neo4j import AsyncGraphDatabase
 
 from .graphiti_manager import GraphitiManager
 from .models import EntityType, RelationshipType
@@ -69,6 +70,9 @@ class StoryProcessor:
             # Step 4: Store traceability mappings
             self._store_traceability_mappings(scenes, extracted_data)
             
+            # Step 5: Fix generic relationships (convert RELATES_TO, etc. to meaningful types)
+            fix_results = await self._fix_generic_relationships(story_id)
+            
             # Calculate processing time
             processing_time = (datetime.utcnow() - start_time).total_seconds() * 1000
             
@@ -87,7 +91,9 @@ class StoryProcessor:
                     "processing_time_ms": processing_time,
                     "processed_at": datetime.utcnow().isoformat(),
                     "processing_version": "1.0.0",
-                    "story_id": story_id
+                    "story_id": story_id,
+                    "scene_errors": extracted_data.get("scene_errors", []),  # Include scene errors
+                    "relationship_fixes": fix_results  # Include relationship fixes
                 }
             }
             
@@ -147,6 +153,7 @@ class StoryProcessor:
         all_relationships = []
         all_scenes = []
         all_knowledge_items = []
+        scene_errors = []  # Track errors for failed fact extraction
         
         # Get or create story session
         session_id = await self.graphiti_manager.create_story_session(story_id)
@@ -159,22 +166,54 @@ class StoryProcessor:
                     episode_body=scene['text'],
                     source_description=f"Scene {scene['order']} from story {story_id}",
                     reference_time=datetime.utcnow(),
-                    session_id=session_id
+                    group_id=session_id
                 )
                 
-                # Extract facts from the scene
-                facts = await self.graphiti_manager.extract_facts(story_id, scene['text'])
+                # Capture the returned session_id from the episode for future calls
+                if episode_result and hasattr(episode_result, 'group_id') and episode_result.group_id:
+                    session_id = episode_result.group_id
+                    # Update the session in the graphiti_manager
+                    self.graphiti_manager._story_sessions[story_id] = session_id
                 
-                # Process extracted facts into entities and relationships
-                scene_entities, scene_relationships, scene_knowledge = self._process_extracted_facts(
-                    facts, scene, story_id, user_id
-                )
+                # Extract entities and relationships from Graphiti 0.3.0 - wrap in try/catch to prevent batch failure
+                try:
+                    # In Graphiti 0.3.0, add_episode automatically extracts entities/relationships
+                    # We need to search for what was created to get the actual data
+                    search_results = await self.graphiti_manager.client.search(
+                        query=scene['text'][:100],  # Use first 100 chars as search query
+                        group_ids=[session_id],
+                        num_results=20  # Get more results to capture all extractions
+                    )
+                    
+                    # Process search results to extract entities and relationships
+                    scene_entities, scene_relationships, scene_knowledge = self._process_search_results(
+                        search_results, scene, story_id, user_id
+                    )
+                    
+                    all_entities.extend(scene_entities)
+                    all_relationships.extend(scene_relationships)
+                    all_knowledge_items.extend(scene_knowledge)
+                    
+                except Exception as extraction_error:
+                    # Log extraction error but continue processing
+                    error_info = {
+                        "scene_id": scene['id'],
+                        "error_type": "entity_extraction_failed",
+                        "error_message": str(extraction_error),
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    scene_errors.append(error_info)
+                    print(f"Warning: Entity extraction failed for scene {scene['id']}: {str(extraction_error)}")
                 
-                all_entities.extend(scene_entities)
-                all_relationships.extend(scene_relationships)
-                all_knowledge_items.extend(scene_knowledge)
+                # Create scene entity with defensive episode_id handling
+                episode_id = None
+                if episode_result:
+                    # Try multiple possible attributes for the episode ID
+                    for attr_name in ['uuid', 'id', 'episode_id']:
+                        if hasattr(episode_result, attr_name):
+                            episode_id = getattr(episode_result, attr_name)
+                            break
                 
-                # Create scene entity
                 scene_entity = {
                     "id": scene['id'],
                     "name": f"Scene {scene['order']}",
@@ -185,29 +224,38 @@ class StoryProcessor:
                         "word_count": scene['word_count'],
                         "story_id": story_id,
                         "user_id": user_id,
-                        "episode_id": episode_result.uuid if hasattr(episode_result, 'uuid') else None,
+                        "episode_id": episode_id,
                         "created_at": datetime.utcnow().isoformat()
                     }
                 }
                 all_scenes.append(scene_entity)
                 
             except Exception as e:
-                print(f"Error processing scene {scene['id']}: {str(e)}")
+                # Log scene processing error but continue with other scenes
+                error_info = {
+                    "scene_id": scene['id'],
+                    "error_type": "scene_processing_failed",
+                    "error_message": str(e),
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+                scene_errors.append(error_info)
+                print(f"Warning: Scene processing failed for scene {scene['id']}: {str(e)}")
                 continue
         
         return {
             "entities": all_entities,
             "relationships": all_relationships,
             "scenes": all_scenes,
-            "knowledge_items": all_knowledge_items
+            "knowledge_items": all_knowledge_items,
+            "scene_errors": scene_errors  # Include errors in the result
         }
     
-    def _process_extracted_facts(self, facts: List[Dict[str, Any]], scene: Dict[str, Any], story_id: str, user_id: str) -> tuple:
+    def _process_search_results(self, search_results: List[Any], scene: Dict[str, Any], story_id: str, user_id: str) -> tuple:
         """
-        Process extracted facts into entities, relationships, and knowledge items.
+        Process search results from Graphiti 0.3.0 to extract entities, relationships, and knowledge items.
         
         Args:
-            facts: List of extracted facts
+            search_results: List of search results from Graphiti (EntityEdge, EntityNode, etc.)
             scene: Scene metadata
             story_id: Story identifier
             user_id: User ID for data isolation
@@ -219,61 +267,75 @@ class StoryProcessor:
         relationships = []
         knowledge_items = []
         
-        for fact in facts:
-            fact_entities = fact.get('entities', [])
-            fact_content = fact.get('fact', '')
-            confidence = fact.get('confidence', 0.5)
-            
-            # Create knowledge item
-            knowledge_id = f"knowledge_{uuid.uuid4().hex[:8]}"
-            knowledge_item = {
-                "id": knowledge_id,
-                "name": f"Knowledge: {fact_content[:50]}...",
-                "type": "KNOWLEDGE",
-                "properties": {
-                    "content": fact_content,
-                    "confidence": confidence,
-                    "scene_id": scene['id'],
-                    "story_id": story_id,
-                    "user_id": user_id,
-                    "created_at": datetime.utcnow().isoformat()
-                }
-            }
-            knowledge_items.append(knowledge_item)
-            
-            # Process entities mentioned in the fact
-            for entity_name in fact_entities:
-                entity_id = f"entity_{entity_name.lower().replace(' ', '_')}_{uuid.uuid4().hex[:8]}"
-                entity_type = self._determine_entity_type(entity_name, fact_content)
+        for result in search_results:
+            try:
+                result_type = type(result).__name__
                 
-                entity = {
-                    "id": entity_id,
-                    "name": entity_name,
-                    "type": entity_type,
-                    "properties": {
-                        "mentioned_in_scene": scene['id'],
-                        "story_id": story_id,
-                        "user_id": user_id,
-                        "confidence": confidence,
-                        "created_at": datetime.utcnow().isoformat()
+                if 'EntityEdge' in result_type:
+                    # This is a relationship/edge
+                    relationship_id = f"rel_{getattr(result, 'uuid', uuid.uuid4().hex[:8])}"
+                    
+                    relationship = {
+                        "id": relationship_id,
+                        "type": getattr(result, 'name', 'RELATED_TO'),
+                        "from_id": getattr(result, 'source_node_uuid', 'unknown'),
+                        "to_id": getattr(result, 'target_node_uuid', 'unknown'),
+                        "properties": {
+                            "fact": getattr(result, 'fact', ''),
+                            "confidence": 0.8,  # Default confidence
+                            "scene_id": scene['id'],
+                            "story_id": story_id,
+                            "user_id": user_id,
+                            "created_at": getattr(result, 'created_at', datetime.utcnow()).isoformat() if hasattr(result, 'created_at') else datetime.utcnow().isoformat(),
+                            "graphiti_uuid": getattr(result, 'uuid', None)
+                        }
                     }
-                }
-                entities.append(entity)
+                    relationships.append(relationship)
+                    
+                    # Create knowledge item from the fact
+                    if hasattr(result, 'fact') and result.fact:
+                        knowledge_id = f"knowledge_{uuid.uuid4().hex[:8]}"
+                        knowledge_item = {
+                            "id": knowledge_id,
+                            "name": f"Fact: {result.fact[:50]}...",
+                            "type": "KNOWLEDGE",
+                            "properties": {
+                                "content": result.fact,
+                                "confidence": 0.8,
+                                "scene_id": scene['id'],
+                                "story_id": story_id,
+                                "user_id": user_id,
+                                "created_at": datetime.utcnow().isoformat(),
+                                "source_relationship": relationship_id
+                            }
+                        }
+                        knowledge_items.append(knowledge_item)
                 
-                # Create relationship between entity and knowledge
-                relationship = {
-                    "type": "KNOWS",
-                    "from_id": entity_id,
-                    "to_id": knowledge_id,
-                    "properties": {
-                        "confidence": confidence,
-                        "scene_id": scene['id'],
-                        "story_id": story_id,
-                        "user_id": user_id,
-                        "created_at": datetime.utcnow().isoformat()
+                elif 'EntityNode' in result_type or 'Node' in result_type:
+                    # This is an entity/node
+                    entity_id = f"entity_{getattr(result, 'uuid', uuid.uuid4().hex[:8])}"
+                    entity_name = getattr(result, 'name', 'Unknown Entity')
+                    entity_type = self._determine_entity_type(entity_name, getattr(result, 'summary', ''))
+                    
+                    entity = {
+                        "id": entity_id,
+                        "name": entity_name,
+                        "type": entity_type,
+                        "properties": {
+                            "summary": getattr(result, 'summary', ''),
+                            "mentioned_in_scene": scene['id'],
+                            "story_id": story_id,
+                            "user_id": user_id,
+                            "confidence": 0.8,
+                            "created_at": getattr(result, 'created_at', datetime.utcnow()).isoformat() if hasattr(result, 'created_at') else datetime.utcnow().isoformat(),
+                            "graphiti_uuid": getattr(result, 'uuid', None)
+                        }
                     }
-                }
-                relationships.append(relationship)
+                    entities.append(entity)
+                
+            except Exception as e:
+                print(f"Warning: Error processing search result {result_type}: {str(e)}")
+                continue
         
         return entities, relationships, knowledge_items
     
@@ -397,6 +459,105 @@ class StoryProcessor:
             Dict containing processing statistics
         """
         return dict(self._processing_stats)
+    
+    async def _fix_generic_relationships(self, story_id: str) -> Dict[str, Any]:
+        """
+        Post-process relationships to convert generic types to meaningful names.
+        This addresses the Graphiti 0.3.0 issue where relationships are created with
+        generic types (RELATES_TO, MENTIONS, HAS_MEMBER) but meaningful names are
+        stored in the 'name' property.
+        
+        Args:
+            story_id: Story identifier to limit the scope of fixes
+            
+        Returns:
+            Dict containing fix results
+        """
+        if not self.graphiti_manager.client:
+            return {"status": "error", "error": "No client connection"}
+        
+        # Generic relationship types that need conversion
+        GENERIC_TYPES = ['RELATES_TO', 'MENTIONS', 'HAS_MEMBER']
+        
+        # Get connection details from GraphitiManager
+        config = self.graphiti_manager.config
+        driver = AsyncGraphDatabase.driver(
+            config.database_url, 
+            auth=(config.username, config.password)
+        )
+        
+        try:
+            async with driver.session() as session:
+                total_fixed = 0
+                fix_results = []
+                
+                for generic_type in GENERIC_TYPES:
+                    # Find relationships of this type that need fixing
+                    result = await session.run(f"""
+                        MATCH ()-[r:{generic_type}]->()
+                        WHERE r.name IS NOT NULL AND r.name <> type(r)
+                        AND (r.group_id CONTAINS $story_id OR r.story_id = $story_id)
+                        RETURN r.name as meaningful_name, count(*) as count
+                    """, story_id=story_id)
+                    
+                    relationships_to_fix = []
+                    async for record in result:
+                        meaningful_name = record['meaningful_name']
+                        count = record['count']
+                        relationships_to_fix.append((meaningful_name, count))
+                    
+                    # Fix each meaningful relationship type
+                    for meaningful_name, count in relationships_to_fix:
+                        if count == 0:
+                            continue
+                            
+                        # Sanitize the relationship name for Neo4j
+                        safe_name = meaningful_name.upper().replace(' ', '_').replace('-', '_')
+                        
+                        try:
+                            # Convert relationships
+                            fix_result = await session.run(f"""
+                                MATCH (a)-[old:{generic_type}]->(b)
+                                WHERE old.name = $meaningful_name
+                                AND (old.group_id CONTAINS $story_id OR old.story_id = $story_id)
+                                WITH a, old, b, old {{ .* }} as props
+                                DELETE old
+                                CREATE (a)-[new:{safe_name}]->(b)
+                                SET new = props
+                                RETURN count(new) as converted
+                            """, meaningful_name=meaningful_name, story_id=story_id)
+                            
+                            record = await fix_result.single()
+                            converted = record['converted'] if record else 0
+                            total_fixed += converted
+                            
+                            if converted > 0:
+                                fix_results.append({
+                                    "from_type": generic_type,
+                                    "to_type": safe_name,
+                                    "converted": converted,
+                                    "original_name": meaningful_name
+                                })
+                                
+                        except Exception as e:
+                            print(f"Warning: Error fixing {generic_type}->{meaningful_name}: {e}")
+                            continue
+                
+                return {
+                    "status": "success",
+                    "total_fixed": total_fixed,
+                    "fixes": fix_results,
+                    "story_id": story_id
+                }
+                
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e),
+                "story_id": story_id
+            }
+        finally:
+            await driver.close()
     
     def get_traceability_mapping(self, segment_id: str) -> Optional[str]:
         """

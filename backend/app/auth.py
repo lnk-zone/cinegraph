@@ -50,37 +50,63 @@ class TokenBucket:
         key = f"rate_limit:{user_id}"
         now = datetime.utcnow().timestamp()
         
-        # Get current state
-        bucket_data = redis_client.hgetall(key)
-        
-        if not bucket_data:
-            # Initialize bucket
-            tokens = self.capacity - 1  # Use 1 token for this request
-            last_refill = now
-        else:
-            tokens = float(bucket_data.get("tokens", 0))
-            last_refill = float(bucket_data.get("last_refill", now))
+        try:
+            # Get current state
+            bucket_data = redis_client.hgetall(key)
             
-            # Calculate tokens to add based on time passed
-            time_passed = now - last_refill
-            tokens_to_add = time_passed * self.refill_rate
-            tokens = min(self.capacity, tokens + tokens_to_add)
+            if not bucket_data:
+                # Initialize bucket
+                tokens = self.capacity - 1  # Use 1 token for this request
+                last_refill = now
+            else:
+                tokens = float(bucket_data.get("tokens", 0))
+                last_refill = float(bucket_data.get("last_refill", now))
+                
+                # Calculate tokens to add based on time passed
+                time_passed = now - last_refill
+                tokens_to_add = time_passed * self.refill_rate
+                tokens = min(self.capacity, tokens + tokens_to_add)
+                
+                # Check if we have enough tokens
+                if tokens < 1:
+                    return False
+                
+                # Use 1 token
+                tokens -= 1
             
-            # Check if we have enough tokens
-            if tokens < 1:
-                return False
+            # Update bucket state
+            redis_client.hset(key, mapping={
+                "tokens": tokens,
+                "last_refill": now
+            })
+            redis_client.expire(key, 60)  # Expire after 1 minute of inactivity
             
-            # Use 1 token
-            tokens -= 1
+            return True
         
-        # Update bucket state
-        redis_client.hset(key, mapping={
-            "tokens": tokens,
-            "last_refill": now
-        })
-        redis_client.expire(key, 60)  # Expire after 1 minute of inactivity
-        
-        return True
+        except redis.ConnectionError as e:
+            # Redis connection errors should surface as HTTP 500
+            raise HTTPException(
+                status_code=500,
+                detail=f"Redis connection error: {str(e)}"
+            )
+        except redis.TimeoutError as e:
+            # Redis timeout errors should surface as HTTP 500
+            raise HTTPException(
+                status_code=500,
+                detail=f"Redis timeout error: {str(e)}"
+            )
+        except redis.RedisError as e:
+            # Generic Redis errors should surface as HTTP 500
+            raise HTTPException(
+                status_code=500,
+                detail=f"Redis error: {str(e)}"
+            )
+        except Exception as e:
+            # Catch any other unexpected errors
+            raise HTTPException(
+                status_code=500,
+                detail=f"Rate limiting error: {str(e)}"
+            )
 
 # Global token bucket instance
 token_bucket = TokenBucket()
