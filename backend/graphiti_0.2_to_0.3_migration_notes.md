@@ -202,6 +202,32 @@ search_results = await self.client.search(
 - Main breaking changes are in SearchConfig requirements and search API
 - Episode API appears mostly compatible with existing code
 
+### New Guidance: Prefer Episodic APIs
+
+With version 0.3.0, it is recommended to use the episodic APIs instead of writing direct Cypher queries. Direct access to Cypher should only be done using helper functions.
+
+#### Example Usage:
+
+```python
+# Adding an episode
+episode_result = await client.add_episode(
+    name="Story Content - Example",
+    episode_body="This is the content of the episode...",
+    source_description="Source description here...",
+    reference_time=datetime.utcnow(),
+    group_id=session_id
+)
+
+# Retrieving episodes
+episodes = await client.retrieve_episodes(
+    reference_time=datetime.utcnow(),
+    last_n=5,
+    group_ids=[session_id]
+)
+```
+
+This approach ensures that interactions are handled through a managed interface, improving security and maintainability.
+
 ## Status: 🟡 IN PROGRESS
 - Package installation: ✅ Complete
 - API analysis: ✅ Complete  

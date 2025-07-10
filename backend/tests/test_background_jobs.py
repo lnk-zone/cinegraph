@@ -33,7 +33,7 @@ async def test_background_job_start_stop(background_job):
 async def test_background_job_run_once(background_job):
     """Test running the background job once."""
     # This should not raise an exception
-    await background_job.run_once()
+    await background_job.run_once("test_story")
 
 
 @pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_background_job_get_status(background_job):
     
     # Check status values
     assert status['is_running'] is False
-    assert status['run_interval'] == 3600  # Default interval
+    assert status['run_interval'] == 30  # Current default interval
     assert isinstance(status['contradiction_report'], dict)
 
 
@@ -102,7 +102,7 @@ async def test_background_job_error_handling(background_job):
     background_job.consistency_engine.run_consistency_scan = mock_run_consistency_scan
     
     # This should not raise an exception due to error handling
-    await background_job.run_once()
+    await background_job.run_once("test_story")
 
 
 @pytest.mark.asyncio

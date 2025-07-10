@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
 Debug script to check what methods are available in Graphiti 0.3.0
+
+Note: This debug script checks for get_nodes_by_query availability for reference
+but does not use it directly, complying with the new policy to avoid direct calls.
 """
 
 import asyncio

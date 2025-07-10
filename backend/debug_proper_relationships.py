@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 Investigate proper Graphiti 0.3.0 relationship creation
+
+Note: This debug script uses manager._run_cypher_query for direct database access
+rather than the deprecated get_nodes_by_query method. The _run_cypher_query method
+is approved for debug/admin scripts with proper feature flag protection.
 """
 
 import asyncio
@@ -26,11 +30,11 @@ async def debug_proper_relationships():
         
         # Simple database overview
         overview_query = "MATCH (n) RETURN count(n) as node_count"
-        overview_result = await manager.client.get_nodes_by_query(overview_query)
+overview_result = await manager._run_cypher_query(overview_query)
         print(f"Current nodes in database: {overview_result[0].get('node_count', 0) if overview_result else 0}")
         
         rel_overview_query = "MATCH ()-[r]->() RETURN count(r) as rel_count"
-        rel_overview_result = await manager.client.get_nodes_by_query(rel_overview_query)
+rel_overview_result = await manager._run_cypher_query(rel_overview_query)
         print(f"Current relationships in database: {rel_overview_result[0].get('rel_count', 0) if rel_overview_result else 0}")
         
         # Test with a simple, clear story
@@ -84,21 +88,21 @@ async def debug_proper_relationships():
         print("\n🔍 Checking Neo4j after community building...")
         
         # Node count
-        nodes_after = await manager.client.get_nodes_by_query("MATCH (n) RETURN count(n) as count")
+nodes_after = await manager._run_cypher_query("MATCH (n) RETURN count(n) as count")
         print(f"Nodes after: {nodes_after[0].get('count', 0) if nodes_after else 0}")
         
         # Relationship count  
-        rels_after = await manager.client.get_nodes_by_query("MATCH ()-[r]->() RETURN count(r) as count")
+rels_after = await manager._run_cypher_query("MATCH ()-[r]->() RETURN count(r) as count")
         print(f"Relationships after: {rels_after[0].get('count', 0) if rels_after else 0}")
         
         # Check relationship types
-        rel_types = await manager.client.get_nodes_by_query("MATCH ()-[r]->() RETURN DISTINCT type(r) as rel_type, count(r) as count")
+rel_types = await manager._run_cypher_query("MATCH ()-[r]->() RETURN DISTINCT type(r) as rel_type, count(r) as count")
         print(f"Relationship types:")
         for rel in rel_types:
             print(f"   - {rel.get('rel_type', 'unknown')}: {rel.get('count', 0)}")
         
         # Sample some relationships with their properties
-        sample_rels = await manager.client.get_nodes_by_query("""
+sample_rels = await manager._run_cypher_query("""
             MATCH (a)-[r]->(b) 
             RETURN type(r) as rel_type, 
                    r.name as name_prop, 

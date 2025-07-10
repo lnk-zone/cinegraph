@@ -29,10 +29,10 @@ async def scan_active_stories():
 
 @shared_task
 async def scan_story_contradictions(story_id: str, user_id: str):
-    """Run contradiction detection for a specific story."""
+    """Run contradiction detection for a specific story using episodic APIs."""
     await graphiti_manager.initialize()
     
-    # Use the DETECT_CONTRADICTIONS procedure
+    # Use the updated detect_contradictions method with episodic APIs
     result = await graphiti_manager.detect_contradictions(story_id, user_id)
     
     if result["status"] == "success":
@@ -40,14 +40,16 @@ async def scan_story_contradictions(story_id: str, user_id: str):
         
         # Publish an alert for critical contradictions
         for contradiction in detection_result.contradictions_found:
-            if contradiction.severity == CRITICAL_SEVERITY_THRESHOLD:
+            if contradiction.severity.value == CRITICAL_SEVERITY_THRESHOLD:
                 alert_data = {
                     'story_id': story_id,
                     'from': contradiction.from_knowledge_id,
                     'to': contradiction.to_knowledge_id,
-                    'severity': contradiction.severity,
+                    'severity': contradiction.severity.value,
                     'reason': contradiction.reason,
                     'detected_at': contradiction.detected_at.isoformat(),
+                    'detection_method': 'episodic_apis',
+                    'note': 'Contradiction detected using search and retrieve_episodes APIs'
                 }
                 alert_manager.publish_alert(alert_data)
         
@@ -55,7 +57,9 @@ async def scan_story_contradictions(story_id: str, user_id: str):
             "status": "success",
             "story_id": story_id,
             "contradictions_found": len(detection_result.contradictions_found),
-            "critical_contradictions": len([c for c in detection_result.contradictions_found if c.severity == CRITICAL_SEVERITY_THRESHOLD])
+            "critical_contradictions": len([c for c in detection_result.contradictions_found if c.severity.value == CRITICAL_SEVERITY_THRESHOLD]),
+            "detection_method": "episodic_apis",
+            "note": "Contradiction detection completed using episodic memory APIs"
         }
     else:
         return result

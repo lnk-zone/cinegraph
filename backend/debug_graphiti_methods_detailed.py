@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 Check all available Graphiti methods for committing data
+
+Note: This debug script uses manager._run_cypher_query for direct database access
+rather than the deprecated get_nodes_by_query method. The _run_cypher_query method
+is approved for debug/admin scripts with proper feature flag protection.
 """
 
 import asyncio
@@ -78,12 +82,12 @@ async def debug_graphiti_methods_detailed():
             RETURN a.name as name
             """
             
-            direct_result = await client.get_nodes_by_query(test_query)
+direct_result = await manager._run_cypher_query(test_query)
             print(f"   ✅ Direct node creation worked: {direct_result}")
             
             # Check if it's now in the database
             check_query = "MATCH (n:TestEntity) RETURN count(n) as count"
-            check_result = await client.get_nodes_by_query(check_query)
+check_result = await manager._run_cypher_query(check_query)
             print(f"   📊 TestEntity nodes in database: {check_result[0].get('count', 0) if check_result else 0}")
             
         except Exception as e:

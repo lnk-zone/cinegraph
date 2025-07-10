@@ -34,7 +34,7 @@ async def test_cypher_rules_setup(consistency_engine):
 @pytest.mark.asyncio
 async def test_detect_contradictions_empty_results(consistency_engine):
     """Test detect_contradictions with empty results."""
-    contradictions = await consistency_engine.detect_contradictions()
+    contradictions = await consistency_engine.detect_contradictions("test_story", "user_123")
     assert isinstance(contradictions, list)
     assert len(contradictions) == 0
 
@@ -53,14 +53,14 @@ async def test_create_contradiction_edges(consistency_engine):
     )
     
     # This should not raise an exception
-    await consistency_engine.create_contradiction_edges([contradiction])
+    await consistency_engine.create_contradiction_edges([contradiction], "test_story")
 
 
 @pytest.mark.asyncio
 async def test_run_consistency_scan(consistency_engine):
     """Test running a full consistency scan."""
     # This should not raise an exception
-    await consistency_engine.run_consistency_scan()
+    await consistency_engine.run_consistency_scan("test_story")
 
 
 @pytest.mark.asyncio

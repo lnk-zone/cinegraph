@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 Test direct Neo4j transaction handling
+
+Note: This debug script uses manager._run_cypher_query for direct database access
+rather than the deprecated get_nodes_by_query method. The _run_cypher_query method
+is approved for debug/admin scripts with proper feature flag protection.
 """
 
 import asyncio
@@ -81,21 +85,21 @@ async def debug_neo4j_transactions():
         # Try to run a query through Graphiti that should definitely persist
         print("   🔍 Testing Graphiti query execution...")
         
-        result = await manager.client.get_nodes_by_query("""
+result = await manager._run_cypher_query("""
             CREATE (g:GraphitiTest {name: 'GraphitiDirectTest', created: datetime()})
             RETURN g.name as name
         """)
         print(f"   📊 Graphiti query result: {result}")
         
         # Immediately check if it's there
-        check_result = await manager.client.get_nodes_by_query("""
+check_result = await manager._run_cypher_query("""
             MATCH (g:GraphitiTest) 
             RETURN g.name as name, g.created as created
         """)
         print(f"   📊 Immediate check result: {check_result}")
         
         # Check total node count
-        count_result = await manager.client.get_nodes_by_query("MATCH (n) RETURN count(n) as count")
+count_result = await manager._run_cypher_query("MATCH (n) RETURN count(n) as count")
         print(f"   📊 Total nodes via Graphiti: {count_result}")
         
     except Exception as e:

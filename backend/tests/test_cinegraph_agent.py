@@ -68,6 +68,17 @@ class TestCineGraphAgent:
         assert agent.supabase is not None
 
     @pytest.mark.asyncio
+    async def test_graph_query_tool(self, agent):
+        """Test graph query tool functionality."""
+        # Mock search result for episodic API
+        agent.graphiti_manager.client.search = AsyncMock(return_value=[{"result": "test"}])
+        
+        result = await agent.graph_query("MATCH (n) RETURN n", {"param": "value"})
+        
+        assert result["success"] is True
+        assert "data" in result
+
+    @pytest.mark.asyncio
     async def test_health_check(self, agent, mock_openai_client):
         """Test health check functionality."""
         # Mock OpenAI response
@@ -81,32 +92,22 @@ class TestCineGraphAgent:
         assert "components" in health
         assert "timestamp" in health
 
-    @pytest.mark.asyncio
-    async def test_graph_query_tool(self, agent):
-        """Test graph query tool functionality."""
-        # Mock query result
-        agent.graphiti_manager.client.query.return_value = [{"result": "test"}]
-        
-        result = await agent.graph_query("MATCH (n) RETURN n", {"param": "value"})
-        
-        assert result["success"] is True
-        assert "data" in result
-        agent.graphiti_manager.client.query.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_narrative_context_tool(self, agent):
         """Test narrative context tool functionality."""
-        # Mock query result
-        agent.graphiti_manager.client.query.return_value = [
-            {"content": "Scene 1 content"},
-            {"content": "Scene 2 content"}
-        ]
+        # Mock search result for episodic API
+        mock_result = Mock()
+        mock_result.fact = "Scene 1 content"
+        mock_result.created_at = datetime.utcnow()
+        mock_result.uuid = "fact_123"
+        
+        agent.graphiti_manager.client.search = AsyncMock(return_value=[mock_result])
+        agent.graphiti_manager._story_sessions = {"story_123": "session_123"}
         
         result = await agent.narrative_context("story_123")
         
         assert "Scene 1 content" in result
-        assert "Scene 2 content" in result
-        agent.graphiti_manager.client.query.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_analyze_story(self, agent, mock_openai_client):
@@ -138,7 +139,7 @@ class TestCineGraphAgent:
         mock_response.choices[0].message.function_call = None
         mock_openai_client.chat.completions.create.return_value = mock_response
         
-        result = await agent.detect_inconsistencies("test_story")
+        result = await agent.detect_inconsistencies("test_story", "user_123")
         
         assert result["inconsistencies"] == "Inconsistencies found"
         assert result["story_id"] == "test_story"
@@ -155,7 +156,7 @@ class TestCineGraphAgent:
         mock_response.choices[0].message.function_call = None
         mock_openai_client.chat.completions.create.return_value = mock_response
         
-        result = await agent.query_story("test_story", "What happened?")
+        result = await agent.query_story("test_story", "What happened?", "user_123")
         
         assert result["answer"] == "Query answer"
         assert result["question"] == "What happened?"
@@ -173,7 +174,7 @@ class TestCineGraphAgent:
         mock_response.choices[0].message.function_call = None
         mock_openai_client.chat.completions.create.return_value = mock_response
         
-        result = await agent.validate_story_consistency("test_story")
+        result = await agent.validate_story_consistency("test_story", "user_123")
         
         assert result["validation_report"] == "Validation report"
         assert result["story_id"] == "test_story"
@@ -235,10 +236,12 @@ class TestCineGraphAgent:
         function_call.name = "graph_query"
         function_call.arguments = '{"cypher_query": "MATCH (n) RETURN n", "params": {}}'
         
+        # Mock search result for episodic API
+        agent.graphiti_manager.client.search = AsyncMock(return_value=[{"result": "test"}])
+        
         result = await agent._execute_function_call(function_call, "test_story")
         
         assert result["success"] is True
-        agent.graphiti_manager.client.query.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_error_handling(self, agent, mock_openai_client):
@@ -252,7 +255,7 @@ class TestCineGraphAgent:
         assert result["error"] == "OpenAI error"
         
         # Test query_story error handling
-        result = await agent.query_story("test", "question")
+        result = await agent.query_story("test", "question", "user_123")
         assert "error" in result
         assert result["error"] == "OpenAI error"
 

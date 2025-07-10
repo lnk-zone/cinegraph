@@ -101,7 +101,7 @@ class GraphitiManager:
     
     async def health_check(self) -> Dict[str, Any]:
         """
-        Perform health check on the Graphiti connection.
+        Perform health check on the Graphiti connection using episodic APIs.
         
         Returns:
             Dict containing health status and connection info
@@ -110,22 +110,30 @@ class GraphitiManager:
             if not self.client:
                 return {"status": "disconnected", "error": "No client connection"}
             
-            # Test connection by trying to get nodes
+            # Test connection using episodic API - search with minimal query
             try:
-                # Use get_nodes_by_query instead of query method
-                result = await self.client.get_nodes_by_query("MATCH (n) RETURN count(n) as node_count LIMIT 1")
-                node_count = len(result) if result else 0
+                # Use search API to confirm connectivity instead of counting nodes
+                search_result = await self.client.search(
+                    query='*', 
+                    group_ids=None, 
+                    num_results=1
+                )
+                connectivity_confirmed = search_result is not None
+                search_result_count = len(search_result) if search_result else 0
             except Exception as query_error:
                 # Log the query error but don't fail the health check
-                print(f"Health check query error: {query_error}")
-                node_count = "unknown"
+                print(f"Health check search error: {query_error}")
+                connectivity_confirmed = False
+                search_result_count = "unknown"
             
             return {
-                "status": "healthy",
+                "status": "healthy" if connectivity_confirmed else "degraded",
                 "database_url": self.config.database_url,
                 "database_name": self.config.database_name,
-                "node_count": node_count,
-                "connection_timeout": self.config.connection_timeout
+                "connectivity_confirmed": connectivity_confirmed,
+                "search_result_count": search_result_count,
+                "connection_timeout": self.config.connection_timeout,
+                "note": "Health check using episodic API (search)"
             }
             
         except Exception as e:
@@ -492,13 +500,14 @@ class GraphitiManager:
     
     async def execute_temporal_query(self, query: TemporalQuery) -> List[Dict[str, Any]]:
         """
-        Execute a temporal query using episodic memory search.
+        Execute a temporal query using episodic memory search and retrieve_episodes APIs.
+        No direct Cypher queries are used.
         
         Args:
             query: TemporalQuery object containing query parameters
             
         Returns:
-            List of query results
+            List of query results formatted for temporal analysis
         """
         if not self.client:
             raise RuntimeError("Client not connected. Call connect() first.")
@@ -509,36 +518,83 @@ class GraphitiManager:
             session_id = self._story_sessions.get(story_id)
             
             if not session_id:
-                return []
+                # If no session found, try searching across all sessions
+                all_sessions = list(self._story_sessions.values())
+                if not all_sessions:
+                    return []
+                session_ids = all_sessions
+            else:
+                session_ids = [session_id]
             
-            # Retrieve episodes around the reference time
+            # Retrieve episodes around the reference time using episodic API
             episodes = await self.client.retrieve_episodes(
                 reference_time=query.timestamp,
-                last_n=10,
-                group_ids=[session_id]
+                last_n=20,  # Get more episodes for better temporal context
+                group_ids=session_ids
+            )
+            
+            # Also use search API to find related content
+            search_query = query.entity_filters.get("search_term", "*") if query.entity_filters else "*"
+            search_results = await self.client.search(
+                query=search_query,
+                group_ids=session_ids,
+                num_results=10
             )
             
             # Filter and format episodes as temporal results
             results = []
+            
+            # Process retrieved episodes
             for episode in episodes:
                 if hasattr(episode, 'created_at'):
                     episode_time = episode.created_at
                     if episode_time <= query.timestamp:
                         results.append({
-                            "source": {"name": "episode", "type": "temporal_node"},
-                            "relationship": {"type": "TEMPORAL_REFERENCE", "created_at": episode_time.isoformat()},
-                            "target": {"content": getattr(episode, 'episode_body', ''), "uuid": getattr(episode, 'uuid', '')}
+                            "source": {"name": "episode", "type": "temporal_episode"},
+                            "relationship": {
+                                "type": "TEMPORAL_REFERENCE", 
+                                "created_at": episode_time.isoformat(),
+                                "source_api": "retrieve_episodes"
+                            },
+                            "target": {
+                                "content": getattr(episode, 'episode_body', ''), 
+                                "uuid": getattr(episode, 'uuid', ''),
+                                "group_id": getattr(episode, 'group_id', '')
+                            }
                         })
+            
+            # Process search results for additional temporal context
+            for result in search_results:
+                if hasattr(result, 'created_at'):
+                    result_time = result.created_at
+                    if result_time <= query.timestamp:
+                        results.append({
+                            "source": {"name": "search_result", "type": "temporal_search"},
+                            "relationship": {
+                                "type": "SEARCH_MATCH", 
+                                "created_at": result_time.isoformat(),
+                                "source_api": "search"
+                            },
+                            "target": {
+                                "content": getattr(result, 'episode_body', getattr(result, 'fact', '')), 
+                                "uuid": getattr(result, 'uuid', ''),
+                                "group_id": getattr(result, 'group_id', '')
+                            }
+                        })
+            
+            # Sort results by timestamp
+            results.sort(key=lambda x: x["relationship"]["created_at"])
             
             return results
             
         except Exception as e:
-            logging.error(f"Failed to execute temporal query: {e}")
+            logging.error(f"Failed to execute temporal query using episodic APIs: {e}")
             raise RuntimeError(f"Failed to execute temporal query: {str(e)}")
     
     async def get_query_statistics(self) -> Dict[str, Any]:
         """
-        Get statistics about the knowledge graph using episodic memory.
+        Get statistics about the knowledge graph using episodic memory APIs.
+        Derives counts from _story_sessions and search result lengths.
         
         Returns:
             Dict containing graph statistics
@@ -551,34 +607,57 @@ class GraphitiManager:
             total_sessions = len(self._story_sessions)
             story_count = len(set(self._story_sessions.keys()))
             
-            # Try to get episode count from search results
-            episode_count = 0
-            try:
-                if self._story_sessions:
-                    # Search across all sessions for a rough episode count
-                    sample_session = list(self._story_sessions.values())[0]
+            # Get episode counts across all sessions using search API
+            total_episodes = 0
+            episode_breakdown = {}
+            
+            for story_id, session_id in self._story_sessions.items():
+                try:
+                    # Use search API to get episode count for each session
                     search_results = await self.client.search(
                         query="*",
-                        group_ids=[sample_session],
-                        num_results=100
+                        group_ids=[session_id],
+                        num_results=1000  # Get more results for better count
                     )
-                    episode_count = len(search_results)
+                    episode_count = len(search_results) if search_results else 0
+                    episode_breakdown[story_id] = episode_count
+                    total_episodes += episode_count
+                except Exception:
+                    episode_breakdown[story_id] = "unknown"
+            
+            # Try to get additional statistics using retrieve_episodes
+            recent_episode_count = 0
+            try:
+                # Get recent episodes across all sessions
+                all_sessions = list(self._story_sessions.values())
+                if all_sessions:
+                    recent_episodes = await self.client.retrieve_episodes(
+                        reference_time=datetime.utcnow(),
+                        last_n=50,
+                        group_ids=all_sessions[:5]  # Limit to first 5 sessions to avoid timeout
+                    )
+                    recent_episode_count = len(recent_episodes) if recent_episodes else 0
             except Exception:
-                episode_count = "unknown"
+                recent_episode_count = "unknown"
             
             return {
                 "session_count": total_sessions,
                 "story_count": story_count,
-                "episode_count": episode_count,
+                "total_episodes": total_episodes,
+                "recent_episodes": recent_episode_count,
+                "episode_breakdown_by_story": episode_breakdown,
+                "active_sessions": list(self._story_sessions.keys()),
                 "timestamp": datetime.utcnow().isoformat(),
-                "note": "Statistics from episodic memory sessions (Graphiti 0.3.0 compatible)"
+                "note": "Statistics from episodic memory using search and retrieve_episodes APIs (Graphiti 0.3.0 compatible)",
+                "api_methods_used": ["search", "retrieve_episodes"]
             }
             
         except Exception as e:
             logging.error(f"Error getting statistics: {e}")
             return {
                 "error": str(e),
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat(),
+                "note": "Error occurred while gathering statistics via episodic APIs"
             }
     
     # === ZEP-LIKE MEMORY MANAGEMENT METHODS ===
@@ -958,3 +1037,54 @@ class GraphitiManager:
                 "error": str(e),
                 "timestamp": datetime.utcnow().isoformat()
             }
+    
+    async def _run_cypher_query(self, cypher: str) -> Any:
+        """
+        Run a direct Cypher query against the graph database.
+        
+        This is a controlled escape hatch for admin/debug code that provides
+        direct access to Cypher queries while discouraging normal use.
+        
+        Args:
+            cypher: The Cypher query string to execute
+            
+        Returns:
+            Query results from the database
+            
+        Raises:
+            RuntimeError: If client not connected or feature flag not enabled
+            ValueError: If cypher query is empty or invalid
+        """
+        if not self.client:
+            raise RuntimeError("Client not connected. Call connect() first.")
+        
+        # Check if direct Cypher queries are allowed via environment variable
+        if not os.getenv("GRAPHITI_ALLOW_CYPHER", "false").lower() == "true":
+            raise RuntimeError(
+                "Direct Cypher queries are disabled. Set GRAPHITI_ALLOW_CYPHER=true to enable this feature."
+            )
+        
+        if not cypher or not cypher.strip():
+            raise ValueError("Cypher query cannot be empty")
+        
+        # Log warning about direct Cypher usage
+        logging.warning(
+            "Direct Cypher query execution detected. This bypasses normal GraphitiManager abstractions. "
+            "Query: %s", cypher[:100] + "..." if len(cypher) > 100 else cypher
+        )
+        
+        try:
+            # Use get_nodes_by_query for Graphiti ≤0.3 compatibility
+            result = await self.client.get_nodes_by_query(cypher)
+            
+            # Log successful execution
+            logging.info(
+                "Direct Cypher query executed successfully. Returned %d result(s)", 
+                len(result) if result else 0
+            )
+            
+            return result
+            
+        except Exception as e:
+            logging.error("Direct Cypher query failed: %s", str(e))
+            raise RuntimeError(f"Cypher query execution failed: {str(e)}")

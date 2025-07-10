@@ -6,6 +6,7 @@ CineGraph is an AI-powered story consistency tool designed for RPG Maker creator
 
 - **AI-Powered Story Analysis**: Uses OpenAI's agent framework for intelligent story analysis
 - **Knowledge Graph Integration**: Neo4j-based knowledge graph for complex story relationships
+- **Episodic API Integration**: In CineGraph 0.3.0, API interactions are managed using episodic memory APIs, which abstract the complexity of direct database queries.
 - **Real-time Contradiction Detection**: Automated detection of story inconsistencies
 - **JWT Authentication**: Secure authentication with Supabase
 - **Rate Limiting**: Redis-based token bucket rate limiting

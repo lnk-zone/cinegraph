@@ -1117,16 +1117,132 @@ class CineGraphAgent:
         
         return optimized_query
     
+    async def _try_episodic_translation(self, cypher_query: str, params: dict) -> dict:
+        """
+        Attempt to translate common Cypher query patterns to episodic API calls.
+        
+        Args:
+            cypher_query: The Cypher query to translate
+            params: Query parameters
+        
+        Returns:
+            Dict with episodic API result if translation successful, None otherwise
+        """
+        try:
+            query_upper = cypher_query.upper()
+            story_id = params.get('story_id')
+            
+            # Pattern 1: Count queries -> use get_query_statistics
+            if 'COUNT(' in query_upper and 'RETURN' in query_upper:
+                stats = await self.graphiti_manager.get_query_statistics()
+                return {
+                    "success": True,
+                    "data": [stats],
+                    "translated_from": "cypher_count",
+                    "api_used": "get_query_statistics",
+                    "note": "Translated COUNT query to episodic statistics API"
+                }
+            
+            # Pattern 2: Content search -> use search API
+            if 'CONTAINS' in query_upper or 'LIKE' in query_upper:
+                if story_id:
+                    session_id = self.graphiti_manager._story_sessions.get(story_id)
+                    if session_id:
+                        # Extract search term from query
+                        search_term = self._extract_search_term(cypher_query)
+                        if search_term:
+                            search_results = await self.graphiti_manager.client.search(
+                                query=search_term,
+                                group_ids=[session_id],
+                                num_results=50
+                            )
+                            return {
+                                "success": True,
+                                "data": search_results,
+                                "translated_from": "cypher_content_search",
+                                "api_used": "search",
+                                "search_term": search_term,
+                                "note": "Translated content search query to episodic search API"
+                            }
+            
+            # Pattern 3: Temporal queries -> use retrieve_episodes
+            if 'CREATED_AT' in query_upper or 'VALID_FROM' in query_upper or 'ORDER BY' in query_upper:
+                if story_id:
+                    session_id = self.graphiti_manager._story_sessions.get(story_id)
+                    if session_id:
+                        episodes = await self.graphiti_manager.client.retrieve_episodes(
+                            reference_time=datetime.utcnow(),
+                            last_n=20,
+                            group_ids=[session_id]
+                        )
+                        return {
+                            "success": True,
+                            "data": episodes,
+                            "translated_from": "cypher_temporal",
+                            "api_used": "retrieve_episodes",
+                            "note": "Translated temporal query to episodic retrieve_episodes API"
+                        }
+            
+            # No translation possible
+            return None
+            
+        except Exception as e:
+            print(f"Error in episodic translation: {str(e)}")
+            return None
+    
+    def _extract_search_term(self, cypher_query: str) -> str:
+        """
+        Extract search term from Cypher query containing CONTAINS or LIKE.
+        
+        Args:
+            cypher_query: The Cypher query
+        
+        Returns:
+            Extracted search term or '*' as fallback
+        """
+        try:
+            import re
+            
+            # Look for CONTAINS 'term' or LIKE '%term%'
+            contains_match = re.search(r"CONTAINS\s+['\"]([^'\"]+)['\"]|LIKE\s+['\"]%?([^'\"]+)%?['\"]]", cypher_query, re.IGNORECASE)
+            if contains_match:
+                return contains_match.group(1) or contains_match.group(2)
+            
+            # Fallback to wildcard search
+            return '*'
+            
+        except Exception:
+            return '*'
+    
     async def graph_query(self, cypher_query: str, params: dict = None, use_cache: bool = True) -> dict:
-        """Execute a validated Cypher query via GraphitiManager with caching."""
+        """
+        DEPRECATED: Direct Cypher queries are being phased out in favor of episodic APIs.
+        
+        This method now attempts to translate common query patterns to episodic API calls
+        where possible, falling back to controlled Cypher execution for backwards compatibility.
+        
+        For new code, use:
+        - graphiti_manager.client.search() for content queries
+        - graphiti_manager.client.retrieve_episodes() for temporal queries
+        - graphiti_manager.get_query_statistics() for statistics
+        """
         try:
             if params is None:
                 params = {}
             
-            # Validate the query first
+            # Attempt to translate common query patterns to episodic APIs
+            episodic_result = await self._try_episodic_translation(cypher_query, params)
+            if episodic_result:
+                return episodic_result
+            
+            # Validate the query first (legacy path)
             is_valid, validation_message = await self.validate_cypher_query(cypher_query)
             if not is_valid:
-                return {"success": False, "error": f"Query validation failed: {validation_message}"}
+                return {
+                    "success": False, 
+                    "error": f"Query validation failed: {validation_message}",
+                    "suggestion": "Consider using episodic APIs: search() or retrieve_episodes()"
+                }
             
             # Check cache if enabled
             if use_cache:
@@ -1134,24 +1250,37 @@ class CineGraphAgent:
                 if query_hash in self.query_cache:
                     return {"success": True, "data": self.query_cache[query_hash], "cached": True}
             
-            # Optimize the query
-            optimized_query = await self._optimize_query(cypher_query)
+            # Log deprecation warning
+            print(f"WARNING: Direct Cypher query used. Consider migrating to episodic APIs. Query: {cypher_query[:100]}...")
             
-            # Execute the query
-            result = await self.graphiti_manager.client.query(optimized_query, params)
-            
-            # Cache the result if enabled
-            if use_cache:
-                query_hash = self._generate_query_hash(cypher_query, params)
-                self.query_cache[query_hash] = result
-                # Limit cache size to prevent memory issues
-                if len(self.query_cache) > 100:
-                    # Remove oldest entries
-                    oldest_keys = list(self.query_cache.keys())[:20]
-                    for key in oldest_keys:
-                        del self.query_cache[key]
-            
-            return {"success": True, "data": result, "cached": False}
+            # Use controlled Cypher execution via GraphitiManager
+            try:
+                result = await self.graphiti_manager._run_cypher_query(cypher_query)
+                
+                # Cache the result if enabled
+                if use_cache:
+                    query_hash = self._generate_query_hash(cypher_query, params)
+                    self.query_cache[query_hash] = result
+                    # Limit cache size to prevent memory issues
+                    if len(self.query_cache) > 100:
+                        # Remove oldest entries
+                        oldest_keys = list(self.query_cache.keys())[:20]
+                        for key in oldest_keys:
+                            del self.query_cache[key]
+                
+                return {
+                    "success": True, 
+                    "data": result, 
+                    "cached": False,
+                    "warning": "Direct Cypher is deprecated. Migrate to episodic APIs."
+                }
+                
+            except Exception as cypher_error:
+                return {
+                    "success": False, 
+                    "error": f"Cypher execution failed: {str(cypher_error)}",
+                    "suggestion": "Consider using episodic APIs instead of direct Cypher"
+                }
             
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -1190,27 +1319,66 @@ class CineGraphAgent:
     
     
     async def narrative_context(self, story_id: str, scene_id: Optional[str] = None, user_id: Optional[str] = None) -> str:
-        """Return raw scene text for a given story ID."""
+        """Return raw scene text for a given story ID using episodic APIs."""
         try:
+            # Get session for this story
+            session_id = self.graphiti_manager._story_sessions.get(story_id)
+            if not session_id:
+                return f"No active session found for story {story_id}. Consider adding content first."
+            
             if scene_id:
-                # Query specific scene
-                query = "MATCH (s:Scene {id: $scene_id, story_id: $story_id}) WHERE ($user_id IS NULL OR s.user_id = $user_id) RETURN s.content as content"
-                params = {"scene_id": scene_id, "story_id": story_id, "user_id": user_id}
+                # Search for specific scene using episodic API
+                search_results = await self.graphiti_manager.client.search(
+                    query=f"scene {scene_id}",
+                    group_ids=[session_id],
+                    num_results=10
+                )
+                
+                if search_results:
+                    # Extract content from search results
+                    scene_content = []
+                    for result in search_results:
+                        content = getattr(result, 'episode_body', getattr(result, 'fact', ''))
+                        if content and scene_id.lower() in content.lower():
+                            scene_content.append(content)
+                    
+                    return "\n\n".join(scene_content) if scene_content else f"No content found for scene {scene_id}"
+                else:
+                    return f"No content found for scene {scene_id}"
             else:
-                # Query all scenes for the story
-                query = "MATCH (s:Scene {story_id: $story_id}) WHERE ($user_id IS NULL OR s.user_id = $user_id) RETURN s.content as content ORDER BY s.sequence"
-                params = {"story_id": story_id, "user_id": user_id}
-            
-            result = await self.graphiti_manager.client.query(query, params)
-            
-            if result:
-                scenes = [r["content"] for r in result]
-                return "\n\n".join(scenes)
-            else:
-                return f"No scene content found for story {story_id}"
+                # Retrieve all episodes for the story using episodic API
+                episodes = await self.graphiti_manager.client.retrieve_episodes(
+                    reference_time=datetime.utcnow(),
+                    last_n=100,  # Get more episodes for complete narrative context
+                    group_ids=[session_id]
+                )
+                
+                if episodes:
+                    # Sort episodes by creation time for narrative order
+                    sorted_episodes = sorted(
+                        episodes, 
+                        key=lambda ep: getattr(ep, 'created_at', datetime.min)
+                    )
+                    
+                    # Extract content from episodes
+                    narrative_content = []
+                    for episode in sorted_episodes:
+                        content = getattr(episode, 'episode_body', '')
+                        if content and 'Story Content:' in content:
+                            # Extract just the story content part
+                            if 'Story Content:' in content:
+                                story_part = content.split('Story Content:')[1].split('\n\nEntities:')[0].strip()
+                                if story_part:
+                                    narrative_content.append(story_part)
+                            else:
+                                narrative_content.append(content)
+                    
+                    return "\n\n".join(narrative_content) if narrative_content else f"No narrative content found for story {story_id}"
+                else:
+                    return f"No episodes found for story {story_id}"
                 
         except Exception as e:
-            return f"Error retrieving narrative context: {str(e)}"
+            return f"Error retrieving narrative context via episodic APIs: {str(e)}"
     
     async def initialize(self) -> None:
         """Initialize the CineGraph Agent."""
@@ -1523,7 +1691,7 @@ class CineGraphAgent:
             }
     
     async def health_check(self) -> Dict[str, Any]:
-        """Perform a health check on the CineGraph Agent."""
+        """Perform a health check on the CineGraph Agent using episodic APIs."""
         try:
             # Test OpenAI connection
             test_response = await self.openai_client.chat.completions.create(
@@ -1535,8 +1703,21 @@ class CineGraphAgent:
             # Test Supabase connection
             supabase_health = self.supabase.table("alerts").select("count").execute()
             
-            # Test GraphitiManager connection
+            # Test GraphitiManager connection using episodic APIs
             graphiti_health = await self.graphiti_manager.health_check()
+            
+            # Additional test: try to retrieve episodes to confirm episodic API connectivity
+            episodic_connectivity = False
+            try:
+                # Test episodic API with minimal query
+                episodes_result = await self.graphiti_manager.client.retrieve_episodes(
+                    reference_time=datetime.utcnow(),
+                    last_n=1,
+                    group_ids=None
+                ) if self.graphiti_manager.client else None
+                episodic_connectivity = episodes_result is not None
+            except Exception:
+                episodic_connectivity = False
             
             return {
                 "status": "healthy",
@@ -1544,9 +1725,12 @@ class CineGraphAgent:
                     "openai": "connected",
                     "supabase": "connected",
                     "graphiti": graphiti_health["status"],
+                    "episodic_api": "connected" if episodic_connectivity else "degraded",
                     "redis_alerts": "listening" if alert_manager.is_listening else "not_listening"
                 },
-                "timestamp": datetime.utcnow().isoformat()
+                "graphiti_details": graphiti_health,
+                "timestamp": datetime.utcnow().isoformat(),
+                "note": "Health check using episodic APIs"
             }
             
         except Exception as e:

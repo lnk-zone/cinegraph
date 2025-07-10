@@ -1,0 +1,19 @@
+name: Lint Check
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  check-get-nodes-by-query:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Check get_nodes_by_query usage restrictions
+      run: |
+        chmod +x scripts/check_get_nodes_by_query.sh
+        ./scripts/check_get_nodes_by_query.sh

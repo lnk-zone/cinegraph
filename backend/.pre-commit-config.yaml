@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-get-nodes-by-query-usage
+        name: Check get_nodes_by_query usage restriction
+        entry: scripts/check_get_nodes_by_query.sh
+        language: script
+        files: '\.py$'
+        exclude: '^(tests/|test_|.*_test\.py$)'
+        description: 'Ensures get_nodes_by_query() is only used in GraphitiManager._run_cypher_query or tests'
