@@ -40,7 +40,16 @@ class SDKAgentManager:
 
         # Conversation state
         self._current_agent = self.story_query_agent
-        self._input_items: List[dict[str, str]] = []
+        # History of the conversation exchanged with the agents
+        self._conversation_history: List[dict[str, str]] = []
+        # Last selected sequence of agents and the index of the last agent used
+        self._agent_sequence: List[Any] = [
+            self.story_query_agent,
+            self.inconsistency_explainer_agent,
+            self.story_debugging_agent,
+            self.results_interpreter_agent,
+        ]
+        self._last_agent_index = 0
 
     def _clear_handoffs(self) -> None:
         for agent in [
@@ -105,7 +114,14 @@ class SDKAgentManager:
     async def reset(self) -> None:
         """Reset conversation state."""
         self._current_agent = self.story_query_agent
-        self._input_items.clear()
+        self._conversation_history.clear()
+        self._agent_sequence = [
+            self.story_query_agent,
+            self.inconsistency_explainer_agent,
+            self.story_debugging_agent,
+            self.results_interpreter_agent,
+        ]
+        self._last_agent_index = 0
 
     def _follow_up_requested(self, text: str) -> bool:
         """Check if the assistant output asks the user for further processing."""
@@ -127,36 +143,45 @@ class SDKAgentManager:
 
     async def send(self, message: str, *, context: Any | None = None, max_turns: int = 8) -> str:
         """Send a user message through the workflow and return the assistant reply."""
-        self._input_items.append({"role": "user", "content": message})
+        self._conversation_history.append({"role": "user", "content": message})
 
-        # Check if the previous assistant message asked for more details
-        if len(self._input_items) >= 2:
+        follow_up = False
+        if len(self._conversation_history) >= 2:
             last_assistant = next(
-                (m for m in reversed(self._input_items[:-1]) if m["role"] == "assistant"),
+                (m for m in reversed(self._conversation_history[:-1]) if m["role"] == "assistant"),
                 None,
             )
             if last_assistant and self._follow_up_requested(last_assistant["content"]):
                 if self._user_declined(message):
                     return "Okay, let me know if you need anything else."
+                follow_up = True
 
-        agents = await self.choose_agents(message)
-        if agents:
-            self._build_handoffs(agents)
-            self._current_agent = agents[0]
+        if follow_up:
+            start_index = min(self._last_agent_index + 1, len(self._agent_sequence) - 1)
+        else:
+            agents = await self.choose_agents(message)
+            if agents:
+                self._agent_sequence = agents
+            start_index = 0
+            self._last_agent_index = 0
+
+        self._build_handoffs(self._agent_sequence[start_index:])
+        self._current_agent = self._agent_sequence[start_index]
 
         remaining_turns = max_turns
         result = None
         while remaining_turns > 0:
             result = await Runner.run(
                 starting_agent=self._current_agent,
-                input=self._input_items,
+                input=self._conversation_history,
                 context=context,
                 max_turns=1,
             )
             remaining_turns -= 1
             self._current_agent = result.last_agent
-            self._input_items = result.to_input_list()
+            self._conversation_history = result.to_input_list()
             output = result.final_output_as(str)
+            self._last_agent_index = self._agent_sequence.index(self._current_agent)
             if not self._follow_up_requested(output):
                 break
             # Wait for the user to respond on the next send() call
