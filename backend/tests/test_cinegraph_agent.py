@@ -49,6 +49,7 @@ class TestCineGraphAgent:
         manager.client = Mock()
         manager.client.query = AsyncMock(return_value=[])
         manager.client.search = AsyncMock(return_value=[{"result": "test"}])
+        manager.client.retrieve_episodes = AsyncMock(return_value=[])
         manager._run_cypher_query = AsyncMock(return_value=[{"result": "test"}])
         manager._story_sessions = {"story_123": "session_123"}
         manager.health_check = AsyncMock(return_value={"status": "healthy"})
@@ -75,7 +76,9 @@ class TestCineGraphAgent:
         """Create a CineGraphAgent instance with mocks."""
         with patch('agents.cinegraph_agent.AsyncOpenAI', return_value=mock_openai_client), \
              patch('agents.cinegraph_agent.create_client', return_value=mock_supabase_client), \
-             patch('agents.cinegraph_agent.alert_manager') as mock_alert_manager:
+             patch('agents.alert_manager.alert_manager') as mock_alert_manager:
+            import agents.story_analysis_agent as sa
+            sa.alert_manager = mock_alert_manager
             # Mock the alert manager to avoid Redis connection
             mock_alert_manager.start_listening = AsyncMock()
             mock_alert_manager.add_alert_handler = Mock()
@@ -102,7 +105,10 @@ class TestCineGraphAgent:
         # Mock search result for episodic API
         agent.graphiti_manager.client.search = AsyncMock(return_value=[{"result": "test"}])
         
-        result = await agent.graph_query("MATCH (n) RETURN n", {"param": "value"})
+        result = await agent.graph_query(
+            "MATCH (n {story_id: $story_id}) RETURN n",
+            {"story_id": "test_story"}
+        )
         
         assert result["success"] is True
         assert "data" in result
@@ -125,15 +131,14 @@ class TestCineGraphAgent:
     @pytest.mark.asyncio
     async def test_narrative_context_tool(self, agent):
         """Test narrative context tool functionality."""
-        # Mock search result for episodic API
         mock_result = Mock()
         mock_result.episode_body = "Scene 1 content"
         mock_result.created_at = datetime.utcnow()
         mock_result.uuid = "fact_123"
-        
-        agent.graphiti_manager.client.search = AsyncMock(return_value=[mock_result])
+
+        agent.graphiti_manager.client.retrieve_episodes = AsyncMock(return_value=[mock_result])
         agent.graphiti_manager._story_sessions = {"story_123": "session_123"}
-        
+
         result = await agent.narrative_context("story_123")
         
         assert "Scene 1 content" in result
@@ -263,7 +268,9 @@ class TestCineGraphAgent:
         # Mock function call
         function_call = Mock()
         function_call.name = "graph_query"
-        function_call.arguments = '{"cypher_query": "MATCH (n) RETURN n", "params": {}}'
+        function_call.arguments = (
+            '{"cypher_query": "MATCH (n {story_id: $story_id}) RETURN n", "params": {"story_id": "test_story"}}'
+        )
         
         # Mock search result for episodic API
         agent.graphiti_manager.client.search = AsyncMock(return_value=[{"result": "test"}])
@@ -295,14 +302,14 @@ class TestAgentFactory:
     @patch.dict("os.environ", {
         "OPENAI_API_KEY": "test_key",
         "SUPABASE_URL": "test_url",
-        "SUPABASE_KEY": "test_key"
+        "SUPABASE_SERVICE_ROLE_KEY": "test_key"
     })
     def test_create_cinegraph_agent(self):
         """Test agent creation via factory."""
         with patch('agents.agent_factory.GraphitiManager'), \
              patch('agents.cinegraph_agent.AsyncOpenAI'), \
              patch('agents.cinegraph_agent.create_client'), \
-             patch('agents.cinegraph_agent.alert_manager'):
+             patch('agents.alert_manager.alert_manager'):
             
             agent = create_cinegraph_agent()
             assert agent is not None
@@ -317,7 +324,7 @@ class TestAgentFactory:
     @patch.dict("os.environ", {
         "OPENAI_API_KEY": "test_key",
         "SUPABASE_URL": "test_url",
-        "SUPABASE_KEY": "test_key"
+        "SUPABASE_SERVICE_ROLE_KEY": "test_key"
     })
     @pytest.mark.asyncio
     async def test_initialize_cinegraph_agent(self):
@@ -325,7 +332,7 @@ class TestAgentFactory:
         with patch('agents.agent_factory.GraphitiManager') as mock_manager, \
              patch('agents.cinegraph_agent.AsyncOpenAI'), \
              patch('agents.cinegraph_agent.create_client'), \
-             patch('agents.cinegraph_agent.alert_manager'):
+             patch('agents.alert_manager.alert_manager'):
             
             # Mock GraphitiManager methods
             mock_manager.return_value.initialize = AsyncMock()

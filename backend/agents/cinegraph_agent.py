@@ -187,6 +187,11 @@ class CineGraphAgent(StoryAnalysisAgent, AlertManager, GraphQueryTools):
         self.system_prompt = self._build_enhanced_system_prompt()
         self.tool_schemas = self._build_enhanced_tool_schemas()
         self._setup_redis_alerts()
+
+    async def initialize(self) -> None:
+        """Perform asynchronous setup tasks."""
+        if self.graphiti_manager and hasattr(self.graphiti_manager, "initialize"):
+            await self.graphiti_manager.initialize()
     
     def _load_schema_context(self) -> Dict[str, Any]:
         """Load and parse the complete CineGraph schema for enhanced query generation."""
