@@ -74,7 +74,7 @@ REDIS_DB=0
 
 1. Install required dependencies:
 ```bash
-pip install openai-agents graphiti-core supabase redis celery
+pip install openai-agents==0.1.0 graphiti-core supabase redis celery
 ```
 
 2. Set up the Supabase alerts table:
