@@ -43,12 +43,7 @@ class SDKAgentManager:
         # History of the conversation exchanged with the agents
         self._conversation_history: List[dict[str, str]] = []
         # Last selected sequence of agents and the index of the last agent used
-        self._agent_sequence: List[Any] = [
-            self.story_query_agent,
-            self.inconsistency_explainer_agent,
-            self.story_debugging_agent,
-            self.results_interpreter_agent,
-        ]
+        self._agent_sequence: List[Any] = [self.story_query_agent]
         self._last_agent_index = 0
 
     def _clear_handoffs(self) -> None:
@@ -83,12 +78,7 @@ class SDKAgentManager:
         }
 
         if self.openai_client is None:
-            return [
-                self.story_query_agent,
-                self.inconsistency_explainer_agent,
-                self.story_debugging_agent,
-                self.results_interpreter_agent,
-            ]
+            return [self.story_query_agent]
 
         system = (
             "You are the SDK agent router. Given a user message, decide which "
@@ -106,7 +96,7 @@ class SDKAgentManager:
         try:
             names = json.loads(content)
         except Exception:
-            names = ["StoryQueryAgent", "ResultsInterpreterAgent"]
+            names = ["StoryQueryAgent"]
 
         selected = [mapping[name] for name in names if name in mapping]
         return selected or [self.story_query_agent]
@@ -115,12 +105,7 @@ class SDKAgentManager:
         """Reset conversation state."""
         self._current_agent = self.story_query_agent
         self._conversation_history.clear()
-        self._agent_sequence = [
-            self.story_query_agent,
-            self.inconsistency_explainer_agent,
-            self.story_debugging_agent,
-            self.results_interpreter_agent,
-        ]
+        self._agent_sequence = [self.story_query_agent]
         self._last_agent_index = 0
 
     def _follow_up_requested(self, text: str) -> bool:
