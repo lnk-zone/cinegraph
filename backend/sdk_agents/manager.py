@@ -122,4 +122,5 @@ class SDKAgentManager:
         )
         self._current_agent = result.last_agent
         self._input_items = result.to_input_list()
+        self._clear_handoffs()
         return result.final_output_as(str)
