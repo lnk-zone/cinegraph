@@ -107,20 +107,60 @@ class SDKAgentManager:
         self._current_agent = self.story_query_agent
         self._input_items.clear()
 
+    def _follow_up_requested(self, text: str) -> bool:
+        """Check if the assistant output asks the user for further processing."""
+        prompts = [
+            "would you like",
+            "need more",
+            "should i continue",
+            "continue with",
+            "more detail",
+        ]
+        lower = text.lower()
+        return any(p in lower for p in prompts)
+
+    def _user_declined(self, text: str) -> bool:
+        """Determine if the user declined additional processing."""
+        declines = ["no", "no thanks", "stop", "that's all", "cancel", "don't"]
+        lower = text.lower()
+        return any(d in lower for d in declines)
+
     async def send(self, message: str, *, context: Any | None = None, max_turns: int = 8) -> str:
         """Send a user message through the workflow and return the assistant reply."""
         self._input_items.append({"role": "user", "content": message})
+
+        # Check if the previous assistant message asked for more details
+        if len(self._input_items) >= 2:
+            last_assistant = next(
+                (m for m in reversed(self._input_items[:-1]) if m["role"] == "assistant"),
+                None,
+            )
+            if last_assistant and self._follow_up_requested(last_assistant["content"]):
+                if self._user_declined(message):
+                    return "Okay, let me know if you need anything else."
+
         agents = await self.choose_agents(message)
         if agents:
             self._build_handoffs(agents)
             self._current_agent = agents[0]
-        result = await Runner.run(
-            starting_agent=self._current_agent,
-            input=self._input_items,
-            context=context,
-            max_turns=max_turns,
-        )
-        self._current_agent = result.last_agent
-        self._input_items = result.to_input_list()
+
+        remaining_turns = max_turns
+        result = None
+        while remaining_turns > 0:
+            result = await Runner.run(
+                starting_agent=self._current_agent,
+                input=self._input_items,
+                context=context,
+                max_turns=1,
+            )
+            remaining_turns -= 1
+            self._current_agent = result.last_agent
+            self._input_items = result.to_input_list()
+            output = result.final_output_as(str)
+            if not self._follow_up_requested(output):
+                break
+            # Wait for the user to respond on the next send() call
+            break
+
         self._clear_handoffs()
-        return result.final_output_as(str)
+        return output if result else ""
