@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+import uuid
+from sdk_agents.manager import SDKAgentManager
 import os
 import redis
 import json
@@ -24,6 +26,23 @@ from celery_config import REDIS_HOST, REDIS_PORT, REDIS_DB, ALERTS_CHANNEL
 from app.auth import get_authenticated_user, get_rate_limited_user, verify_websocket_token, User, get_supabase_client
 
 load_dotenv()
+
+
+class ConversationRequest(BaseModel):
+    """Input payload for SDK conversation endpoint."""
+
+    session_id: Optional[str] = None
+    messages: List[str]
+
+
+class ConversationResponse(BaseModel):
+    """Response payload for SDK conversation endpoint."""
+
+    session_id: str
+    responses: List[str]
+
+
+sdk_sessions: Dict[str, SDKAgentManager] = {}
 
 app = FastAPI(
     title="CineGraph API",
@@ -55,6 +74,26 @@ async def startup_event():
 @app.get("/")
 async def root():
     return {"message": "CineGraph API is running"}
+
+
+@app.post("/api/sdk/conversation", response_model=ConversationResponse)
+async def sdk_conversation(conversation: ConversationRequest):
+    """Route a list of messages through the SDK agent orchestrator."""
+    try:
+        session_id = conversation.session_id or str(uuid.uuid4())
+        manager = sdk_sessions.get(session_id)
+        if manager is None:
+            manager = SDKAgentManager()
+            sdk_sessions[session_id] = manager
+
+        responses: List[str] = []
+        for message in conversation.messages:
+            response = await manager.send(message)
+            responses.append(response)
+
+        return ConversationResponse(session_id=session_id, responses=responses)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/story/analyze")
 async def analyze_story(story_input: StoryInput, current_user: User = Depends(get_rate_limited_user)):
