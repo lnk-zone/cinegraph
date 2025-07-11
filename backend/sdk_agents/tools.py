@@ -1,4 +1,8 @@
-"""Helper tool wrappers for SDK agents."""
+"""Helper tool wrappers for SDK agents.
+
+These wrappers expose a minimal interface for accessing CineGraph core
+functionality via :class:`GraphitiManager`.
+"""
 from __future__ import annotations
 
 import os
