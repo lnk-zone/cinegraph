@@ -17,9 +17,10 @@ from core.graphiti_manager import GraphitiManager
 from agents.cinegraph_agent import CineGraphAgent
 from core.story_processor import StoryProcessor
 from core.models import (
-    StoryInput, InconsistencyReport, CharacterKnowledge, ContradictionDetectionResult, 
+    StoryInput, InconsistencyReport, CharacterKnowledge, ContradictionDetectionResult,
     UserProfile, UserProfileUpdate, EpisodeEntity, EpisodeHierarchy, RelationshipEvolution
 )
+from game.models import RPGProject, ExportConfiguration
 from core.redis_alerts import alert_manager
 from tasks.temporal_contradiction_detection import scan_story_contradictions
 from celery_config import REDIS_HOST, REDIS_PORT, REDIS_DB, ALERTS_CHANNEL
@@ -43,6 +44,9 @@ class ConversationResponse(BaseModel):
 
 
 sdk_sessions: Dict[str, SDKAgentManager] = {}
+
+# In-memory store for RPG projects and related data
+rpg_projects: Dict[str, Dict[str, Any]] = {}
 
 app = FastAPI(
     title="CineGraph API",
@@ -94,6 +98,59 @@ async def sdk_conversation(conversation: ConversationRequest):
         return ConversationResponse(session_id=session_id, responses=responses)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# === RPG Project Endpoints ===
+
+@app.post("/api/rpg-projects")
+async def create_rpg_project(project: RPGProject):
+    """Create a new RPG project and store it in memory."""
+    project_id = str(uuid.uuid4())
+    rpg_projects[project_id] = {
+        "project": project,
+        "stories": {},
+        "export_configs": [],
+    }
+    return {"project_id": project_id, "project": project}
+
+
+@app.post("/api/rpg-projects/{project_id}/sync-story")
+async def sync_project_story(project_id: str, story: StoryInput):
+    """Persist story content for a specific RPG project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project["stories"][story.story_id] = story.content
+    return {
+        "status": "success",
+        "project_id": project_id,
+        "story_id": story.story_id,
+    }
+
+
+@app.get("/api/rpg-projects/{project_id}/export-configs")
+async def get_export_configs(project_id: str):
+    """Retrieve export configurations for a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    return {"export_configs": project["export_configs"]}
+
+
+@app.post("/api/rpg-projects/{project_id}/export-configs")
+async def add_export_config(project_id: str, config: ExportConfiguration):
+    """Add an export configuration to a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project["export_configs"].append(config)
+    return {
+        "status": "success",
+        "count": len(project["export_configs"]),
+    }
 
 @app.post("/api/story/analyze")
 async def analyze_story(story_input: StoryInput, current_user: User = Depends(get_rate_limited_user)):
