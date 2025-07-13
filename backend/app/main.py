@@ -25,7 +25,9 @@ from game.models import (
     ExportConfiguration,
     RPGVariable,
     RPGSwitch,
+    RPGCharacter,
 )
+from game.character_enhancer import StoryCharacterEnhancer
 from game.variable_generator import StoryVariableGenerator
 from core.redis_alerts import alert_manager
 from tasks.temporal_contradiction_detection import scan_story_contradictions
@@ -118,6 +120,7 @@ async def create_rpg_project(project: RPGProject):
         "export_configs": [],
         "variables": [],
         "switches": [],
+        "characters": [],
     }
     return {"project_id": project_id, "project": project}
 
@@ -247,6 +250,104 @@ async def add_project_switch(project_id: str, switch: RPGSwitch):
 
     project.setdefault("switches", []).append(switch)
     return {"status": "success", "count": len(project["switches"])}
+
+
+@app.get("/api/rpg-projects/{project_id}/characters")
+async def get_project_characters(project_id: str):
+    """Retrieve characters for a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"characters": project.get("characters", [])}
+
+
+@app.post("/api/rpg-projects/{project_id}/characters")
+async def add_project_character(project_id: str, character: RPGCharacter):
+    """Add a character to a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project.setdefault("characters", []).append(character)
+    return {"status": "success", "count": len(project["characters"])}
+
+
+@app.post("/api/rpg-projects/{project_id}/characters/generate-stats")
+async def generate_character_stats(project_id: str):
+    """Generate character stats from the current story state."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project["stories"]:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+
+    enhancer = StoryCharacterEnhancer(cinegraph_agent)
+    all_chars: List[RPGCharacter] = []
+    for story_id in project["stories"].keys():
+        chars_for_story = await enhancer.enhance_characters(story_id)
+        all_chars.extend(chars_for_story)
+
+    project["characters"] = all_chars
+    return {"status": "success", "characters": all_chars}
+
+
+@app.post("/api/rpg-projects/{project_id}/characters/{character_id}/enhance-from-story")
+async def enhance_character_from_story(project_id: str, character_id: str):
+    """Update a character's details using the story state."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    character = next((c for c in project.get("characters", []) if c.name == character_id), None)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    if not project["stories"]:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+
+    story_id = next(iter(project["stories"].keys()))
+    enhancer = StoryCharacterEnhancer(cinegraph_agent)
+    chars_for_story = await enhancer.enhance_characters(story_id)
+    for updated in chars_for_story:
+        if updated.name == character_id:
+            character.level = updated.level
+            character.stats = updated.stats
+            character.type = updated.type
+            character.description = updated.description
+            character.knowledge_state = updated.knowledge_state
+            break
+
+    return {"status": "success", "character": character}
+
+
+@app.get("/api/rpg-projects/{project_id}/characters/{character_id}/knowledge-state")
+async def get_character_knowledge_state(project_id: str, character_id: str):
+    """Retrieve a character's knowledge state."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    character = next((c for c in project.get("characters", []) if c.name == character_id), None)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    return {"knowledge_state": character.knowledge_state}
+
+
+@app.put("/api/rpg-projects/{project_id}/characters/{character_id}/knowledge-state")
+async def update_character_knowledge_state(project_id: str, character_id: str, knowledge: List[Dict[str, Any]]):
+    """Update a character's knowledge state."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    character = next((c for c in project.get("characters", []) if c.name == character_id), None)
+    if not character:
+        raise HTTPException(status_code=404, detail="Character not found")
+
+    character.knowledge_state = knowledge
+    return {"status": "success", "character": character}
 
 @app.post("/api/story/analyze")
 async def analyze_story(story_input: StoryInput, current_user: User = Depends(get_rate_limited_user)):
