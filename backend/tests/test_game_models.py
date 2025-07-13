@@ -10,6 +10,9 @@ from game.models import (
     ExportFormat,
     RPGProject,
     ExportConfiguration,
+    RPGCharacter,
+    RPGCharacterType,
+    CharacterStats,
 )
 
 
@@ -32,4 +35,13 @@ def test_export_configuration_defaults():
     assert config.output_path == "./export"
     assert config.validate_before_export is True
     assert config.validation_level == ValidationLevel.BASIC
+
+
+def test_rpg_character_defaults():
+    char = RPGCharacter(name="Hero")
+    assert char.type == RPGCharacterType.NPC
+    assert char.level == 1
+    assert isinstance(char.stats, CharacterStats)
+    assert char.stats.hp == 100
+    assert char.knowledge_state == []
 
