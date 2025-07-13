@@ -356,3 +356,62 @@ async def test_validation_error_exception():
     assert error.message == "test message"
     assert "Validation rule 'test_rule' failed: test message" in str(error)
 
+
+@pytest.mark.asyncio
+async def test_validate_rpg_variable_success(validation_rules):
+    to_node = {"name": "Gold", "data_type": "integer", "value": 10}
+    is_valid, error_msg = await validation_rules._validate_rpg_variable(
+        "RPG_VARIABLE", {}, to_node, {}
+    )
+    assert is_valid
+    assert error_msg == ""
+
+
+@pytest.mark.asyncio
+async def test_validate_rpg_variable_failure(validation_rules):
+    to_node = {"name": "Gold", "data_type": "integer", "value": "ten"}
+    is_valid, error_msg = await validation_rules._validate_rpg_variable(
+        "RPG_VARIABLE", {}, to_node, {}
+    )
+    assert not is_valid
+
+
+@pytest.mark.asyncio
+async def test_validate_rpg_switch_success(validation_rules):
+    to_node = {"name": "Door", "is_on": True}
+    is_valid, error_msg = await validation_rules._validate_rpg_switch(
+        "RPG_SWITCH", {}, to_node, {}
+    )
+    assert is_valid
+    assert error_msg == ""
+
+
+@pytest.mark.asyncio
+async def test_validate_rpg_switch_failure(validation_rules):
+    to_node = {"name": "", "is_on": "yes"}
+    is_valid, error_msg = await validation_rules._validate_rpg_switch(
+        "RPG_SWITCH", {}, to_node, {}
+    )
+    assert not is_valid
+
+
+@pytest.mark.asyncio
+async def test_validate_location_connection_success(validation_rules):
+    from_node = {"location_id": "Town"}
+    to_node = {"location_id": "Forest"}
+    is_valid, error_msg = await validation_rules._validate_location_connection(
+        "LOCATION_CONNECTION", from_node, to_node, {}
+    )
+    assert is_valid
+    assert error_msg == ""
+
+
+@pytest.mark.asyncio
+async def test_validate_location_connection_failure(validation_rules):
+    from_node = {"location_id": "Town"}
+    to_node = {"location_id": "Town"}
+    is_valid, error_msg = await validation_rules._validate_location_connection(
+        "LOCATION_CONNECTION", from_node, to_node, {}
+    )
+    assert not is_valid
+
