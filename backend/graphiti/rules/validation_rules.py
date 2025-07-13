@@ -30,7 +30,10 @@ class ValidationRules:
             'prevent_relationship_self_loops': self._prevent_relationship_self_loops,
             'validate_temporal_consistency': self._validate_temporal_consistency,
             'validate_ownership_temporal_logic': self._validate_ownership_temporal_logic,
-            'validate_scene_order': self._validate_scene_order
+            'validate_scene_order': self._validate_scene_order,
+            'validate_rpg_variable': self._validate_rpg_variable,
+            'validate_rpg_switch': self._validate_rpg_switch,
+            'validate_location_connection': self._validate_location_connection
         }
     
     async def validate_edge_creation(self, edge_type: str, from_node: Dict[str, Any], 
@@ -176,7 +179,7 @@ class ValidationRules:
         
         return True, ""
     
-    async def _validate_scene_order(self, edge_type: str, from_node: Dict[str, Any], 
+    async def _validate_scene_order(self, edge_type: str, from_node: Dict[str, Any],
                                   to_node: Dict[str, Any], properties: Dict[str, Any]) -> Tuple[bool, str]:
         """
         Validate scene ordering for PRESENT_IN edges.
@@ -197,7 +200,69 @@ class ValidationRules:
         
         # TODO: Could add additional validation here to check for gaps in scene ordering
         # This would require querying existing scenes in the graph
-        
+
+        return True, ""
+
+    async def _validate_rpg_variable(self, edge_type: str, from_node: Dict[str, Any],
+                                     to_node: Dict[str, Any], properties: Dict[str, Any]) -> Tuple[bool, str]:
+        """Validate RPG variable nodes."""
+        # Only run if node looks like an RPGVariable
+        data_type = to_node.get('data_type')
+        if data_type is None:
+            return True, ""
+
+        value = to_node.get('value')
+        if value is None:
+            return True, ""
+
+        try:
+            if data_type == 'integer' and not isinstance(value, int):
+                int(value)
+            elif data_type == 'float' and not isinstance(value, (int, float)):
+                float(value)
+            elif data_type == 'string' and not isinstance(value, str):
+                return False, "Variable value must be a string"
+            elif data_type == 'boolean' and not isinstance(value, bool):
+                if isinstance(value, str) and value.lower() in ['true', 'false']:
+                    pass
+                else:
+                    return False, "Variable value must be boolean"
+        except (ValueError, TypeError):
+            return False, f"Value '{value}' incompatible with {data_type}"
+
+        return True, ""
+
+    async def _validate_rpg_switch(self, edge_type: str, from_node: Dict[str, Any],
+                                   to_node: Dict[str, Any], properties: Dict[str, Any]) -> Tuple[bool, str]:
+        """Validate RPG switch nodes."""
+        if 'is_on' not in to_node:
+            return True, ""
+
+        if not isinstance(to_node.get('name'), str) or not to_node['name']:
+            return False, "Switch name cannot be empty"
+
+        if not isinstance(to_node['is_on'], bool):
+            return False, "Switch is_on must be boolean"
+
+        return True, ""
+
+    async def _validate_location_connection(self, edge_type: str, from_node: Dict[str, Any],
+                                            to_node: Dict[str, Any], properties: Dict[str, Any]) -> Tuple[bool, str]:
+        """Validate edges connecting locations."""
+        if edge_type not in {"LOCATION_CONNECTION", "CONNECTED_TO"}:
+            # Fallback if edge type differs
+            if 'from_location' not in from_node and 'location_id' not in from_node:
+                return True, ""
+
+        from_id = from_node.get('location_id') or from_node.get('name')
+        to_id = to_node.get('location_id') or to_node.get('name')
+
+        if not from_id or not to_id:
+            return False, "Both locations must have identifiers"
+
+        if from_id == to_id:
+            return False, "Location cannot connect to itself"
+
         return True, ""
     
     async def register_triggers(self):
