@@ -97,3 +97,54 @@ class ExportConfiguration(BaseModel):
     )
 
 
+class VariableDataType(str, Enum):
+    """Supported data types for RPG variables."""
+
+    INTEGER = "integer"
+    FLOAT = "float"
+    STRING = "string"
+    BOOLEAN = "boolean"
+
+
+class VariableScope(str, Enum):
+    """Scope levels for RPG variables."""
+
+    GAME = "game"
+    MAP = "map"
+    EVENT = "event"
+
+
+class SwitchScope(str, Enum):
+    """Scope levels for RPG switches."""
+
+    GLOBAL = "global"
+    LOCAL = "local"
+
+
+class RPGVariable(BaseModel):
+    """Represents a variable in an RPG project."""
+
+    name: str = Field(..., description="Variable name")
+    value: Optional[str | int | float | bool] = Field(
+        default=None, description="Initial value of the variable"
+    )
+    data_type: VariableDataType = Field(
+        default=VariableDataType.INTEGER, description="Data type of the variable"
+    )
+    scope: VariableScope = Field(
+        default=VariableScope.GAME, description="Scope of the variable"
+    )
+    description: Optional[str] = Field(default=None, description="Variable description")
+
+
+class RPGSwitch(BaseModel):
+    """Represents a boolean switch in an RPG project."""
+
+    name: str = Field(..., description="Switch name")
+    is_on: bool = Field(default=False, description="Initial state of the switch")
+    scope: SwitchScope = Field(
+        default=SwitchScope.GLOBAL, description="Scope of the switch"
+    )
+    description: Optional[str] = Field(default=None, description="Switch description")
+
+
