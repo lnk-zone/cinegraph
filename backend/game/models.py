@@ -180,3 +180,51 @@ class RPGCharacter(BaseModel):
     description: Optional[str] = Field(default=None, description="Character description")
 
 
+class LocationType(str, Enum):
+    """Types of locations within an RPG world."""
+
+    TOWN = "town"
+    DUNGEON = "dungeon"
+    BUILDING = "building"
+    WILDERNESS = "wilderness"
+    OTHER = "other"
+
+
+class ConnectionType(str, Enum):
+    """Ways locations can be connected."""
+
+    PATH = "path"
+    DOOR = "door"
+    PORTAL = "portal"
+    OTHER = "other"
+
+
+class Direction(str, Enum):
+    """Cardinal or relative directions for connections."""
+
+    NORTH = "north"
+    SOUTH = "south"
+    EAST = "east"
+    WEST = "west"
+    UP = "up"
+    DOWN = "down"
+
+
+class RPGLocation(BaseModel):
+    """Represents a location within the story world."""
+
+    name: str = Field(..., description="Location name")
+    type: LocationType = Field(default=LocationType.OTHER, description="Location type")
+    description: Optional[str] = Field(default=None, description="Location description")
+    events: list[str] = Field(default_factory=list, description="Story events that occur here")
+
+
+class LocationConnection(BaseModel):
+    """Connection from one location to another."""
+
+    from_location: str = Field(..., description="Starting location name")
+    to_location: str = Field(..., description="Destination location name")
+    type: ConnectionType = Field(default=ConnectionType.PATH, description="Connection type")
+    direction: Optional[Direction] = Field(default=None, description="Direction from start to destination")
+
+
