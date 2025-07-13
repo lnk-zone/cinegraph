@@ -148,3 +148,35 @@ class RPGSwitch(BaseModel):
     description: Optional[str] = Field(default=None, description="Switch description")
 
 
+class RPGCharacterType(str, Enum):
+    """Types of RPG characters."""
+
+    HERO = "hero"
+    VILLAIN = "villain"
+    COMPANION = "companion"
+    NPC = "npc"
+    OTHER = "other"
+
+
+class CharacterStats(BaseModel):
+    """Basic RPG-style character statistics."""
+
+    hp: int = Field(default=100, description="Hit points")
+    mp: int = Field(default=0, description="Magic points")
+    strength: int = Field(default=10, description="Physical power")
+    agility: int = Field(default=10, description="Dexterity and speed")
+    intelligence: int = Field(default=10, description="Mental acuity")
+    charisma: int = Field(default=10, description="Social aptitude")
+
+
+class RPGCharacter(BaseModel):
+    """Represents a playable or non-playable character."""
+
+    name: str = Field(..., description="Character name")
+    type: RPGCharacterType = Field(default=RPGCharacterType.NPC, description="Character type")
+    level: int = Field(default=1, description="Character level")
+    stats: CharacterStats = Field(default_factory=CharacterStats, description="Character statistics")
+    knowledge_state: list[dict] = Field(default_factory=list, description="Known facts or memories")
+    description: Optional[str] = Field(default=None, description="Character description")
+
+
