@@ -228,3 +228,134 @@ class LocationConnection(BaseModel):
     direction: Optional[Direction] = Field(default=None, description="Direction from start to destination")
 
 
+class QuestStatus(str, Enum):
+    """Possible states of an RPG quest."""
+
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class QuestType(str, Enum):
+    """Categories of quests."""
+
+    MAIN = "main"
+    SIDE = "side"
+    TUTORIAL = "tutorial"
+    GUILD = "guild"
+    OTHER = "other"
+
+
+class ObjectiveType(str, Enum):
+    """Types of quest objectives."""
+
+    FETCH = "fetch"
+    ELIMINATE = "eliminate"
+    EXPLORE = "explore"
+    TALK = "talk"
+    OTHER = "other"
+
+
+class CompletionCondition(BaseModel):
+    """Condition required to complete an objective."""
+
+    variable: Optional[str] = Field(
+        default=None, description="Variable identifier that controls completion"
+    )
+    required_value: Optional[str | int | float | bool] = Field(
+        default=None, description="Value that the variable must equal"
+    )
+    switch: Optional[str] = Field(
+        default=None, description="Switch that must be active"
+    )
+    description: Optional[str] = Field(
+        default=None, description="Human readable description of the condition"
+    )
+
+
+class QuestObjective(BaseModel):
+    """Represents a single quest objective."""
+
+    description: str = Field(..., description="Objective description")
+    type: ObjectiveType = Field(
+        default=ObjectiveType.OTHER, description="Objective type"
+    )
+    target_id: Optional[str] = Field(
+        default=None, description="Identifier of the target entity"
+    )
+    quantity: Optional[int] = Field(
+        default=None, description="Quantity required for completion"
+    )
+    completion_condition: Optional[CompletionCondition] = Field(
+        default=None, description="Additional completion requirement"
+    )
+    is_mandatory: bool = Field(
+        default=True, description="Whether this objective must be completed"
+    )
+
+
+class RPGQuest(BaseModel):
+    """Collection of objectives forming a quest."""
+
+    name: str = Field(..., description="Quest name")
+    quest_type: QuestType = Field(
+        default=QuestType.SIDE, description="Classification of the quest"
+    )
+    status: QuestStatus = Field(
+        default=QuestStatus.NOT_STARTED, description="Current quest status"
+    )
+    description: Optional[str] = Field(
+        default=None, description="Quest narrative description"
+    )
+    objectives: list[QuestObjective] = Field(
+        default_factory=list, description="List of quest objectives"
+    )
+    rewards: list[str] = Field(
+        default_factory=list, description="Rewards granted upon completion"
+    )
+    prerequisites: list[str] = Field(
+        default_factory=list, description="Quest IDs that must be completed first"
+    )
+
+
+class DialogueChoice(BaseModel):
+    """A selectable choice in a dialogue node."""
+
+    text: str = Field(..., description="Choice text shown to the player")
+    next_node_id: Optional[str] = Field(
+        default=None, description="Identifier of the next dialogue node"
+    )
+    condition: Optional[CompletionCondition] = Field(
+        default=None, description="Condition required to show this choice"
+    )
+
+
+class DialogueNode(BaseModel):
+    """Node containing dialogue text and choices."""
+
+    id: str = Field(..., description="Unique node identifier")
+    speaker: Optional[str] = Field(
+        default=None, description="Name of the speaking character"
+    )
+    text: str = Field(..., description="Dialogue text")
+    choices: list[DialogueChoice] = Field(
+        default_factory=list, description="Available responses"
+    )
+
+
+class DialogueTree(BaseModel):
+    """Root container for a dialogue sequence."""
+
+    id: str = Field(..., description="Unique dialogue tree identifier")
+    start_node_id: Optional[str] = Field(
+        default=None, description="Identifier of the starting node"
+    )
+    nodes: list[DialogueNode] = Field(
+        default_factory=list, description="Nodes that make up the dialogue"
+    )
+    description: Optional[str] = Field(
+        default=None, description="Dialogue tree description"
+    )
+
+
