@@ -15,6 +15,10 @@ CineGraph is an AI-powered story consistency tool designed for RPG Maker creator
 - **Item Ownership Tracking**: Complete ownership history with temporal tracking and transfer methods
 - **Multi-user Support**: User isolation and data protection
 
+## RPG Backend Overview
+
+For details on the RPG Maker integration, including new models, helper services and project APIs, see [docs/rpg_backend_overview.md](docs/rpg_backend_overview.md).
+
 ## Environment Variables
 
 Create a `.env` file in the project root with the following variables:
