@@ -82,11 +82,11 @@ tool_mod = types.ModuleType("agents.tool")
 tool_mod.function_tool = lambda f: f
 sys.modules.setdefault("agents.tool", tool_mod)
 
-from app.main import app, rpg_projects
+from app.main import app
 
 
 @pytest.fixture
-def client():
+def client(rpg_graphiti_store):
     with patch("app.main.graphiti_manager.initialize", AsyncMock()), \
          patch("app.main.cinegraph_agent.initialize", AsyncMock()), \
          patch("app.main.alert_manager.start_listening", AsyncMock()):
@@ -94,14 +94,9 @@ def client():
         yield test_client
 
 
-@pytest.fixture(autouse=True)
-def clear_projects():
-    rpg_projects.clear()
-    yield
-    rpg_projects.clear()
 
 
-def test_location_generation_and_enhancement(client):
+def test_location_generation_and_enhancement(client, rpg_graphiti_store):
     project_data = {"name": "LocProj", "version": "MZ", "genre": "fantasy"}
     resp = client.post("/api/rpg-projects", json=project_data)
     project_id = resp.json()["project_id"]
@@ -117,8 +112,8 @@ def test_location_generation_and_enhancement(client):
         ))
         resp = client.post(f"/api/rpg-projects/{project_id}/locations/generate-from-story")
         assert resp.status_code == 200
-        assert len(rpg_projects[project_id]["locations"]) == 1
-        assert len(rpg_projects[project_id]["location_connections"]) == 1
+        assert len(rpg_graphiti_store[project_id]["locations"]) == 1
+        assert len(rpg_graphiti_store[project_id]["location_connections"]) == 1
         mock_enh.enhance_locations.assert_called_once()
 
     with patch("app.main.StoryLocationEnhancer") as MockEnh:
@@ -131,11 +126,11 @@ def test_location_generation_and_enhancement(client):
             f"/api/rpg-projects/{project_id}/locations/Town/enhance-from-story"
         )
         assert resp.status_code == 200
-        assert rpg_projects[project_id]["locations"][0].description == "Busy"
+        assert rpg_graphiti_store[project_id]["locations"][0].description == "Busy"
         mock_enh.enhance_locations.assert_called_once()
 
 
-def test_location_connection_endpoints(client):
+def test_location_connection_endpoints(client, rpg_graphiti_store):
     project_data = {"name": "ConnProj", "version": "MZ", "genre": "fantasy"}
     resp = client.post("/api/rpg-projects", json=project_data)
     project_id = resp.json()["project_id"]

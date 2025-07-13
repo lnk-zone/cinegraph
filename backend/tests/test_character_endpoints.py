@@ -37,11 +37,11 @@ tool_mod = types.ModuleType("agents.tool")
 tool_mod.function_tool = lambda f: f
 sys.modules.setdefault("agents.tool", tool_mod)
 
-from app.main import app, rpg_projects
+from app.main import app
 
 
 @pytest.fixture
-def client():
+def client(rpg_graphiti_store):
     with patch("app.main.graphiti_manager.initialize", AsyncMock()), \
          patch("app.main.cinegraph_agent.initialize", AsyncMock()), \
          patch("app.main.alert_manager.start_listening", AsyncMock()):
@@ -49,14 +49,9 @@ def client():
         yield test_client
 
 
-@pytest.fixture(autouse=True)
-def clear_projects():
-    rpg_projects.clear()
-    yield
-    rpg_projects.clear()
 
 
-def test_character_generation_and_enhancement(client):
+def test_character_generation_and_enhancement(client, rpg_graphiti_store):
     project_data = {"name": "Demo", "version": "MZ", "genre": "fantasy"}
     resp = client.post("/api/rpg-projects", json=project_data)
     project_id = resp.json()["project_id"]
@@ -77,7 +72,7 @@ def test_character_generation_and_enhancement(client):
 
         resp = client.post(f"/api/rpg-projects/{project_id}/characters/generate-stats")
         assert resp.status_code == 200
-        assert len(rpg_projects[project_id]["characters"]) == 1
+        assert len(rpg_graphiti_store[project_id]["characters"]) == 1
         mock_enh.enhance_characters.assert_called_once()
 
     with patch("app.main.StoryCharacterEnhancer") as MockEnh:
@@ -95,13 +90,13 @@ def test_character_generation_and_enhancement(client):
             f"/api/rpg-projects/{project_id}/characters/Alice/enhance-from-story"
         )
         assert resp.status_code == 200
-        char = rpg_projects[project_id]["characters"][0]
+        char = rpg_graphiti_store[project_id]["characters"][0]
         assert char.level == 2
         assert char.stats.hp == 150
         mock_enh.enhance_characters.assert_called_once()
 
 
-def test_character_knowledge_state_endpoints(client):
+def test_character_knowledge_state_endpoints(client, rpg_graphiti_store):
     project_data = {"name": "Demo2", "version": "MZ", "genre": "fantasy"}
     resp = client.post("/api/rpg-projects", json=project_data)
     project_id = resp.json()["project_id"]
@@ -120,4 +115,4 @@ def test_character_knowledge_state_endpoints(client):
         json=new_knowledge,
     )
     assert resp.status_code == 200
-    assert rpg_projects[project_id]["characters"][0].knowledge_state == new_knowledge
+    assert rpg_graphiti_store[project_id]["characters"][0].knowledge_state == new_knowledge

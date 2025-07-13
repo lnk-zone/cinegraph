@@ -56,9 +56,6 @@ class ConversationResponse(BaseModel):
 
 sdk_sessions: Dict[str, SDKAgentManager] = {}
 
-# In-memory store for RPG projects and related data
-rpg_projects: Dict[str, Dict[str, Any]] = {}
-
 app = FastAPI(
     title="CineGraph API",
     description="AI-powered story consistency tool for RPG Maker creators",
@@ -115,29 +112,15 @@ async def sdk_conversation(conversation: ConversationRequest):
 
 @app.post("/api/rpg-projects")
 async def create_rpg_project(project: RPGProject):
-    """Create a new RPG project and store it in memory."""
-    project_id = str(uuid.uuid4())
-    rpg_projects[project_id] = {
-        "project": project,
-        "stories": {},
-        "export_configs": [],
-        "variables": [],
-        "switches": [],
-        "characters": [],
-        "locations": [],
-        "location_connections": [],
-    }
+    """Create a new RPG project."""
+    project_id = await graphiti_manager.create_rpg_project(project)
     return {"project_id": project_id, "project": project}
 
 
 @app.post("/api/rpg-projects/{project_id}/sync-story")
 async def sync_project_story(project_id: str, story: StoryInput):
     """Persist story content for a specific RPG project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project["stories"][story.story_id] = story.content
+    await graphiti_manager.sync_project_story(project_id, story)
     return {
         "status": "success",
         "project_id": project_id,
@@ -148,90 +131,68 @@ async def sync_project_story(project_id: str, story: StoryInput):
 @app.get("/api/rpg-projects/{project_id}/export-configs")
 async def get_export_configs(project_id: str):
     """Retrieve export configurations for a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    return {"export_configs": project["export_configs"]}
+    configs = await graphiti_manager.get_export_configs(project_id)
+    return {"export_configs": configs}
 
 
 @app.post("/api/rpg-projects/{project_id}/export-configs")
 async def add_export_config(project_id: str, config: ExportConfiguration):
     """Add an export configuration to a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project["export_configs"].append(config)
-    return {
-        "status": "success",
-        "count": len(project["export_configs"]),
-    }
+    await graphiti_manager.add_export_config(project_id, config)
+    configs = await graphiti_manager.get_export_configs(project_id)
+    return {"status": "success", "count": len(configs)}
 
 
 @app.get("/api/rpg-projects/{project_id}/variables")
 async def get_project_variables(project_id: str):
     """Retrieve variables for a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return {"variables": project.get("variables", [])}
+    vars = await graphiti_manager.get_project_variables(project_id)
+    return {"variables": vars}
 
 
 @app.post("/api/rpg-projects/{project_id}/variables")
 async def add_project_variable(project_id: str, variable: RPGVariable):
     """Add a variable to a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project.setdefault("variables", []).append(variable)
-    return {"status": "success", "count": len(project["variables"])}
+    await graphiti_manager.add_project_variable(project_id, variable)
+    vars = await graphiti_manager.get_project_variables(project_id)
+    return {"status": "success", "count": len(vars)}
 
 
 @app.post("/api/rpg-projects/{project_id}/variables/generate-from-story")
 async def generate_variables_from_story(project_id: str):
     """Generate variables from the current story state using the agent."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if not project["stories"]:
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
         raise HTTPException(status_code=400, detail="No stories found for project")
 
     generator = StoryVariableGenerator(cinegraph_agent)
     all_vars: List[RPGVariable] = []
-    for story_id in project["stories"].keys():
-        vars_for_story = await generator.generate_variables(story_id)
+    for sid in story_ids:
+        vars_for_story = await generator.generate_variables(sid)
         all_vars.extend(vars_for_story)
 
-    project["variables"] = all_vars
+    await graphiti_manager.replace_project_variables(project_id, all_vars)
     return {"status": "success", "variables": all_vars}
 
 
 @app.post("/api/rpg-projects/{project_id}/variables/{variable_id}/story-sync")
 async def sync_variable_from_story(project_id: str, variable_id: str):
     """Sync a single variable with data from the story state."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    variable = next((v for v in project.get("variables", []) if v.name == variable_id), None)
+    variables = await graphiti_manager.get_project_variables(project_id)
+    variable = next((v for v in variables if v.name == variable_id), None)
     if not variable:
         raise HTTPException(status_code=404, detail="Variable not found")
 
-    if not project["stories"]:
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
         raise HTTPException(status_code=400, detail="No stories found for project")
 
-    story_id = next(iter(project["stories"].keys()))
     generator = StoryVariableGenerator(cinegraph_agent)
-    vars_for_story = await generator.generate_variables(story_id)
+    vars_for_story = await generator.generate_variables(story_ids[0])
     for updated in vars_for_story:
         if updated.name == variable_id:
-            variable.value = updated.value
-            variable.data_type = updated.data_type
-            variable.scope = updated.scope
-            variable.description = updated.description
+            await graphiti_manager.update_project_variable(project_id, updated)
+            variable = updated
             break
 
     return {"status": "success", "variable": variable}
@@ -240,87 +201,72 @@ async def sync_variable_from_story(project_id: str, variable_id: str):
 @app.get("/api/rpg-projects/{project_id}/switches")
 async def get_project_switches(project_id: str):
     """Retrieve switches for a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return {"switches": project.get("switches", [])}
+    switches = await graphiti_manager.get_project_switches(project_id)
+    return {"switches": switches}
 
 
 @app.post("/api/rpg-projects/{project_id}/switches")
 async def add_project_switch(project_id: str, switch: RPGSwitch):
     """Add a switch to a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project.setdefault("switches", []).append(switch)
-    return {"status": "success", "count": len(project["switches"])}
+    await graphiti_manager.add_project_switch(project_id, switch)
+    switches = await graphiti_manager.get_project_switches(project_id)
+    return {"status": "success", "count": len(switches)}
 
 
 @app.get("/api/rpg-projects/{project_id}/characters")
 async def get_project_characters(project_id: str):
     """Retrieve characters for a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return {"characters": project.get("characters", [])}
+    chars = await graphiti_manager.get_project_characters(project_id)
+    return {"characters": chars}
 
 
 @app.post("/api/rpg-projects/{project_id}/characters")
 async def add_project_character(project_id: str, character: RPGCharacter):
     """Add a character to a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project.setdefault("characters", []).append(character)
-    return {"status": "success", "count": len(project["characters"])}
+    await graphiti_manager.add_project_character(project_id, character)
+    chars = await graphiti_manager.get_project_characters(project_id)
+    return {"status": "success", "count": len(chars)}
 
 
 @app.post("/api/rpg-projects/{project_id}/characters/generate-stats")
 async def generate_character_stats(project_id: str):
     """Generate character stats from the current story state."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
+        raise HTTPException(status_code=400, detail="No stories found for project")
 
-    if not project["stories"]:
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
         raise HTTPException(status_code=400, detail="No stories found for project")
 
     enhancer = StoryCharacterEnhancer(cinegraph_agent)
     all_chars: List[RPGCharacter] = []
-    for story_id in project["stories"].keys():
-        chars_for_story = await enhancer.enhance_characters(story_id)
+    for sid in story_ids:
+        chars_for_story = await enhancer.enhance_characters(sid)
         all_chars.extend(chars_for_story)
 
-    project["characters"] = all_chars
+    await graphiti_manager.replace_project_characters(project_id, all_chars)
     return {"status": "success", "characters": all_chars}
 
 
 @app.post("/api/rpg-projects/{project_id}/characters/{character_id}/enhance-from-story")
 async def enhance_character_from_story(project_id: str, character_id: str):
     """Update a character's details using the story state."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    character = next((c for c in project.get("characters", []) if c.name == character_id), None)
+    chars = await graphiti_manager.get_project_characters(project_id)
+    character = next((c for c in chars if c.name == character_id), None)
     if not character:
         raise HTTPException(status_code=404, detail="Character not found")
 
-    if not project["stories"]:
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
         raise HTTPException(status_code=400, detail="No stories found for project")
 
-    story_id = next(iter(project["stories"].keys()))
     enhancer = StoryCharacterEnhancer(cinegraph_agent)
-    chars_for_story = await enhancer.enhance_characters(story_id)
+    chars_for_story = await enhancer.enhance_characters(story_ids[0])
     for updated in chars_for_story:
         if updated.name == character_id:
-            character.level = updated.level
-            character.stats = updated.stats
-            character.type = updated.type
-            character.description = updated.description
-            character.knowledge_state = updated.knowledge_state
+            await graphiti_manager.update_project_character(project_id, updated)
+            character = updated
             break
 
     return {"status": "success", "character": character}
@@ -329,128 +275,89 @@ async def enhance_character_from_story(project_id: str, character_id: str):
 @app.get("/api/rpg-projects/{project_id}/characters/{character_id}/knowledge-state")
 async def get_character_knowledge_state(project_id: str, character_id: str):
     """Retrieve a character's knowledge state."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    character = next((c for c in project.get("characters", []) if c.name == character_id), None)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    return {"knowledge_state": character.knowledge_state}
+    knowledge = await graphiti_manager.get_character_knowledge_state(project_id, character_id)
+    return {"knowledge_state": knowledge}
 
 
 @app.put("/api/rpg-projects/{project_id}/characters/{character_id}/knowledge-state")
 async def update_character_knowledge_state(project_id: str, character_id: str, knowledge: List[Dict[str, Any]]):
     """Update a character's knowledge state."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    character = next((c for c in project.get("characters", []) if c.name == character_id), None)
-    if not character:
-        raise HTTPException(status_code=404, detail="Character not found")
-
-    character.knowledge_state = knowledge
-    return {"status": "success", "character": character}
+    await graphiti_manager.update_character_knowledge_state(project_id, character_id, knowledge)
+    return {"status": "success"}
 
 
 @app.get("/api/rpg-projects/{project_id}/locations")
 async def get_project_locations(project_id: str):
     """Retrieve locations for a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return {"locations": project.get("locations", [])}
+    locs = await graphiti_manager.get_project_locations(project_id)
+    return {"locations": locs}
 
 
 @app.post("/api/rpg-projects/{project_id}/locations")
 async def add_project_location(project_id: str, location: RPGLocation):
     """Add a location to a project."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project.setdefault("locations", []).append(location)
-    return {"status": "success", "count": len(project["locations"])}
+    await graphiti_manager.add_project_location(project_id, location)
+    locs = await graphiti_manager.get_project_locations(project_id)
+    return {"status": "success", "count": len(locs)}
 
 
 @app.post("/api/rpg-projects/{project_id}/locations/generate-from-story")
 async def generate_locations_from_story(project_id: str):
     """Generate locations and connections from the story state."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if not project["stories"]:
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
         raise HTTPException(status_code=400, detail="No stories found for project")
 
     enhancer = StoryLocationEnhancer(cinegraph_agent)
     all_locs: List[RPGLocation] = []
     all_conns: List[LocationConnection] = []
-    for story_id in project["stories"].keys():
-        locs, conns = await enhancer.enhance_locations(story_id)
+    for sid in story_ids:
+        locs, conns = await enhancer.enhance_locations(sid)
         all_locs.extend(locs)
         all_conns.extend(conns)
 
-    project["locations"] = all_locs
-    project["location_connections"] = all_conns
+    await graphiti_manager.replace_project_locations(project_id, all_locs)
+    await graphiti_manager.replace_location_connections(project_id, all_conns)
     return {"status": "success", "locations": all_locs, "connections": all_conns}
 
 
 @app.post("/api/rpg-projects/{project_id}/locations/{location_id}/enhance-from-story")
 async def enhance_location_from_story(project_id: str, location_id: str):
     """Update a location's details using the story state."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    location = next((l for l in project.get("locations", []) if l.name == location_id), None)
+    locs = await graphiti_manager.get_project_locations(project_id)
+    location = next((l for l in locs if l.name == location_id), None)
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
 
-    if not project["stories"]:
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
         raise HTTPException(status_code=400, detail="No stories found for project")
 
-    story_id = next(iter(project["stories"].keys()))
     enhancer = StoryLocationEnhancer(cinegraph_agent)
-    locs, conns = await enhancer.enhance_locations(story_id)
-    for updated in locs:
+    new_locs, conns = await enhancer.enhance_locations(story_ids[0])
+    for updated in new_locs:
         if updated.name == location_id:
-            location.type = updated.type
-            location.description = updated.description
-            location.events = updated.events
+            await graphiti_manager.update_project_location(project_id, updated)
+            location = updated
             break
 
-    # Update connections related to this location
-    existing = [c for c in project.get("location_connections", []) if c.from_location != location_id and c.to_location != location_id]
-    for conn in conns:
-        if conn.from_location == location_id or conn.to_location == location_id:
-            existing.append(conn)
-    project["location_connections"] = existing
-
+    await graphiti_manager.replace_location_connections(project_id, conns)
     return {"status": "success", "location": location}
 
 
 @app.get("/api/rpg-projects/{project_id}/locations/{location_id}/connections")
 async def get_location_connections(project_id: str, location_id: str):
     """Retrieve connections for a specific location."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    conns = [c for c in project.get("location_connections", []) if c.from_location == location_id or c.to_location == location_id]
+    conns = await graphiti_manager.get_location_connections(project_id, location_id)
     return {"connections": conns}
 
 
 @app.post("/api/rpg-projects/{project_id}/locations/{location_id}/connections")
 async def add_location_connection(project_id: str, location_id: str, connection: LocationConnection):
     """Add a connection for a location."""
-    project = rpg_projects.get(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    project.setdefault("location_connections", []).append(connection)
-    return {"status": "success", "count": len(project["location_connections"])}
+    await graphiti_manager.add_location_connection(project_id, connection)
+    conns = await graphiti_manager.get_location_connections(project_id, location_id)
+    return {"status": "success", "count": len(conns)}
 
 @app.post("/api/story/analyze")
 async def analyze_story(story_input: StoryInput, current_user: User = Depends(get_rate_limited_user)):

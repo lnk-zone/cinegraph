@@ -1518,3 +1518,221 @@ class GraphitiManager:
                 "error": str(e),
                 "story_id": story_id
             }
+
+    # === RPG PROJECT MANAGEMENT ===
+
+    async def create_rpg_project(self, project: RPGProject) -> str:
+        """Persist an ``RPGProject`` node and return its generated ID."""
+        project_id = str(uuid.uuid4())
+        props = {**project.dict(), "project_id": project_id}
+        prop_str = ", ".join(f"{k}: '{v}'" for k, v in props.items())
+        cypher = f"CREATE (p:RPGProject {{ {prop_str} }})"
+        await self._run_cypher_query(cypher)
+        return project_id
+
+    async def sync_project_story(self, project_id: str, story: StoryInput) -> None:
+        """Store story content for a project."""
+        prop_str = story.content.replace("'", "\\'")
+        cypher = (
+            f"MERGE (p:RPGProject {{project_id: '{project_id}'}}) "
+            f"MERGE (s:ProjectStory {{story_id: '{story.story_id}', content: '{prop_str}'}}) "
+            f"MERGE (p)-[:HAS_STORY]->(s)"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def add_export_config(self, project_id: str, config: ExportConfiguration) -> None:
+        """Add an export configuration to a project."""
+        props = ", ".join(f"{k}: '{v}'" for k, v in config.dict().items())
+        cypher = (
+            f"MATCH (p:RPGProject {{project_id: '{project_id}'}}) "
+            f"CREATE (c:ExportConfiguration {{ {props} }})-[:FOR_PROJECT]->(p)"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def get_export_configs(self, project_id: str) -> List[ExportConfiguration]:
+        """Retrieve export configurations for a project."""
+        cypher = (
+            f"MATCH (c:ExportConfiguration)-[:FOR_PROJECT]->(p:RPGProject {{project_id: '{project_id}'}}) RETURN c"
+        )
+        results = await self._run_cypher_query(cypher)
+        configs = []
+        for record in results or []:
+            node = record.get("c", record)
+            data = getattr(node, "properties", getattr(node, "data", {}))
+            configs.append(ExportConfiguration(**data))
+        return configs
+
+    async def add_project_variable(self, project_id: str, variable: RPGVariable) -> None:
+        props = {**variable.dict(), "project_id": project_id}
+        prop_str = ", ".join(f"{k}: '{v}'" for k, v in props.items())
+        cypher = f"CREATE (:RPGVariable {{ {prop_str} }})"
+        await self._run_cypher_query(cypher)
+
+    async def get_project_variables(self, project_id: str) -> List[RPGVariable]:
+        cypher = f"MATCH (v:RPGVariable {{project_id: '{project_id}'}}) RETURN v"
+        results = await self._run_cypher_query(cypher)
+        vars: List[RPGVariable] = []
+        for record in results or []:
+            node = record.get("v", record)
+            data = getattr(node, "properties", getattr(node, "data", {}))
+            vars.append(RPGVariable(**data))
+        return vars
+
+    async def replace_project_variables(self, project_id: str, variables: List[RPGVariable]) -> None:
+        await self._run_cypher_query(
+            f"MATCH (v:RPGVariable {{project_id: '{project_id}'}}) DETACH DELETE v"
+        )
+        for var in variables:
+            await self.add_project_variable(project_id, var)
+
+    async def update_project_variable(self, project_id: str, variable: RPGVariable) -> None:
+        props = variable.dict()
+        set_str = ", ".join(f"v.{k} = '{v}'" for k, v in props.items())
+        cypher = (
+            f"MATCH (v:RPGVariable {{project_id: '{project_id}', name: '{variable.name}'}}) "
+            f"SET {set_str}"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def add_project_switch(self, project_id: str, switch: RPGSwitch) -> None:
+        props = {**switch.dict(), "project_id": project_id}
+        prop_str = ", ".join(f"{k}: '{v}'" for k, v in props.items())
+        cypher = f"CREATE (:RPGSwitch {{ {prop_str} }})"
+        await self._run_cypher_query(cypher)
+
+    async def get_project_switches(self, project_id: str) -> List[RPGSwitch]:
+        cypher = f"MATCH (s:RPGSwitch {{project_id: '{project_id}'}}) RETURN s"
+        results = await self._run_cypher_query(cypher)
+        switches: List[RPGSwitch] = []
+        for record in results or []:
+            node = record.get("s", record)
+            data = getattr(node, "properties", getattr(node, "data", {}))
+            switches.append(RPGSwitch(**data))
+        return switches
+
+    async def add_project_character(self, project_id: str, character: RPGCharacter) -> None:
+        props = {**character.dict(), "project_id": project_id}
+        prop_str = ", ".join(f"{k}: '{v}'" for k, v in props.items())
+        cypher = f"CREATE (:RPGCharacter {{ {prop_str} }})"
+        await self._run_cypher_query(cypher)
+
+    async def get_project_characters(self, project_id: str) -> List[RPGCharacter]:
+        cypher = f"MATCH (c:RPGCharacter {{project_id: '{project_id}'}}) RETURN c"
+        results = await self._run_cypher_query(cypher)
+        chars: List[RPGCharacter] = []
+        for record in results or []:
+            node = record.get("c", record)
+            data = getattr(node, "properties", getattr(node, "data", {}))
+            chars.append(RPGCharacter(**data))
+        return chars
+
+    async def replace_project_characters(self, project_id: str, characters: List[RPGCharacter]) -> None:
+        await self._run_cypher_query(
+            f"MATCH (c:RPGCharacter {{project_id: '{project_id}'}}) DETACH DELETE c"
+        )
+        for char in characters:
+            await self.add_project_character(project_id, char)
+
+    async def update_project_character(self, project_id: str, character: RPGCharacter) -> None:
+        props = character.dict()
+        set_str = ", ".join(f"c.{k} = '{v}'" for k, v in props.items())
+        cypher = (
+            f"MATCH (c:RPGCharacter {{project_id: '{project_id}', name: '{character.name}'}}) "
+            f"SET {set_str}"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def get_character_knowledge_state(self, project_id: str, character_id: str) -> List[Dict[str, Any]]:
+        cypher = (
+            f"MATCH (c:RPGCharacter {{project_id: '{project_id}', name: '{character_id}'}}) "
+            f"RETURN c.knowledge_state AS ks"
+        )
+        results = await self._run_cypher_query(cypher)
+        if results:
+            record = results[0]
+            return record.get("ks", [])
+        return []
+
+    async def update_character_knowledge_state(self, project_id: str, character_id: str, knowledge: List[Dict[str, Any]]) -> None:
+        ks_json = json.dumps(knowledge).replace("'", "\\'")
+        cypher = (
+            f"MATCH (c:RPGCharacter {{project_id: '{project_id}', name: '{character_id}'}}) "
+            f"SET c.knowledge_state = '{ks_json}'"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def add_project_location(self, project_id: str, location: RPGLocation) -> None:
+        props = {**location.dict(), "project_id": project_id}
+        prop_str = ", ".join(f"{k}: '{v}'" for k, v in props.items())
+        cypher = f"CREATE (:RPGLocation {{ {prop_str} }})"
+        await self._run_cypher_query(cypher)
+
+    async def get_project_locations(self, project_id: str) -> List[RPGLocation]:
+        cypher = f"MATCH (l:RPGLocation {{project_id: '{project_id}'}}) RETURN l"
+        results = await self._run_cypher_query(cypher)
+        locs: List[RPGLocation] = []
+        for record in results or []:
+            node = record.get("l", record)
+            data = getattr(node, "properties", getattr(node, "data", {}))
+            locs.append(RPGLocation(**data))
+        return locs
+
+    async def replace_project_locations(self, project_id: str, locations: List[RPGLocation]) -> None:
+        await self._run_cypher_query(
+            f"MATCH (l:RPGLocation {{project_id: '{project_id}'}}) DETACH DELETE l"
+        )
+        for loc in locations:
+            await self.add_project_location(project_id, loc)
+
+    async def update_project_location(self, project_id: str, location: RPGLocation) -> None:
+        props = location.dict()
+        set_str = ", ".join(f"l.{k} = '{v}'" for k, v in props.items())
+        cypher = (
+            f"MATCH (l:RPGLocation {{project_id: '{project_id}', name: '{location.name}'}}) "
+            f"SET {set_str}"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def replace_location_connections(self, project_id: str, connections: List[LocationConnection]) -> None:
+        await self._run_cypher_query(
+            f"MATCH (:RPGProject {{project_id: '{project_id}'}})<-[:FOR_PROJECT]-(c:LocationConnection) DETACH DELETE c"
+        )
+        for conn in connections:
+            await self.add_location_connection(project_id, conn)
+
+    async def add_location_connection(self, project_id: str, connection: LocationConnection) -> None:
+        props = {**connection.dict(), "project_id": project_id}
+        prop_str = ", ".join(f"{k}: '{v}'" for k, v in props.items())
+        cypher = f"CREATE (:LocationConnection {{ {prop_str} }})"
+        await self._run_cypher_query(cypher)
+
+    async def get_location_connections(self, project_id: str, location_id: str) -> List[LocationConnection]:
+        cypher = (
+            f"MATCH (c:LocationConnection {{project_id: '{project_id}'}}) "
+            f"WHERE c.from_location = '{location_id}' OR c.to_location = '{location_id}' "
+            f"RETURN c"
+        )
+        results = await self._run_cypher_query(cypher)
+        conns: List[LocationConnection] = []
+        for record in results or []:
+            node = record.get("c", record)
+            data = getattr(node, "properties", getattr(node, "data", {}))
+            conns.append(LocationConnection(**data))
+        return conns
+
+    async def get_project_story_ids(self, project_id: str) -> List[str]:
+        cypher = (
+            f"MATCH (:RPGProject {{project_id: '{project_id}'}})-[:HAS_STORY]->(s:ProjectStory) RETURN s.story_id"
+        )
+        results = await self._run_cypher_query(cypher)
+        return [r.get("s.story_id") if isinstance(r, dict) else r for r in results or []]
+
+    async def get_project_story_content(self, project_id: str, story_id: str) -> str:
+        cypher = (
+            f"MATCH (:RPGProject {{project_id: '{project_id}'}})-[:HAS_STORY]->(s:ProjectStory {{story_id: '{story_id}'}}) RETURN s.content"
+        )
+        results = await self._run_cypher_query(cypher)
+        if results:
+            rec = results[0]
+            return rec.get("s.content") if isinstance(rec, dict) else rec
+        return ""
