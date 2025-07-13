@@ -20,7 +20,13 @@ from core.models import (
     StoryInput, InconsistencyReport, CharacterKnowledge, ContradictionDetectionResult,
     UserProfile, UserProfileUpdate, EpisodeEntity, EpisodeHierarchy, RelationshipEvolution
 )
-from game.models import RPGProject, ExportConfiguration
+from game.models import (
+    RPGProject,
+    ExportConfiguration,
+    RPGVariable,
+    RPGSwitch,
+)
+from game.variable_generator import StoryVariableGenerator
 from core.redis_alerts import alert_manager
 from tasks.temporal_contradiction_detection import scan_story_contradictions
 from celery_config import REDIS_HOST, REDIS_PORT, REDIS_DB, ALERTS_CHANNEL
@@ -110,6 +116,8 @@ async def create_rpg_project(project: RPGProject):
         "project": project,
         "stories": {},
         "export_configs": [],
+        "variables": [],
+        "switches": [],
     }
     return {"project_id": project_id, "project": project}
 
@@ -151,6 +159,94 @@ async def add_export_config(project_id: str, config: ExportConfiguration):
         "status": "success",
         "count": len(project["export_configs"]),
     }
+
+
+@app.get("/api/rpg-projects/{project_id}/variables")
+async def get_project_variables(project_id: str):
+    """Retrieve variables for a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"variables": project.get("variables", [])}
+
+
+@app.post("/api/rpg-projects/{project_id}/variables")
+async def add_project_variable(project_id: str, variable: RPGVariable):
+    """Add a variable to a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project.setdefault("variables", []).append(variable)
+    return {"status": "success", "count": len(project["variables"])}
+
+
+@app.post("/api/rpg-projects/{project_id}/variables/generate-from-story")
+async def generate_variables_from_story(project_id: str):
+    """Generate variables from the current story state using the agent."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project["stories"]:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+
+    generator = StoryVariableGenerator(cinegraph_agent)
+    all_vars: List[RPGVariable] = []
+    for story_id in project["stories"].keys():
+        vars_for_story = await generator.generate_variables(story_id)
+        all_vars.extend(vars_for_story)
+
+    project["variables"] = all_vars
+    return {"status": "success", "variables": all_vars}
+
+
+@app.post("/api/rpg-projects/{project_id}/variables/{variable_id}/story-sync")
+async def sync_variable_from_story(project_id: str, variable_id: str):
+    """Sync a single variable with data from the story state."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    variable = next((v for v in project.get("variables", []) if v.name == variable_id), None)
+    if not variable:
+        raise HTTPException(status_code=404, detail="Variable not found")
+
+    if not project["stories"]:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+
+    story_id = next(iter(project["stories"].keys()))
+    generator = StoryVariableGenerator(cinegraph_agent)
+    vars_for_story = await generator.generate_variables(story_id)
+    for updated in vars_for_story:
+        if updated.name == variable_id:
+            variable.value = updated.value
+            variable.data_type = updated.data_type
+            variable.scope = updated.scope
+            variable.description = updated.description
+            break
+
+    return {"status": "success", "variable": variable}
+
+
+@app.get("/api/rpg-projects/{project_id}/switches")
+async def get_project_switches(project_id: str):
+    """Retrieve switches for a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"switches": project.get("switches", [])}
+
+
+@app.post("/api/rpg-projects/{project_id}/switches")
+async def add_project_switch(project_id: str, switch: RPGSwitch):
+    """Add a switch to a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project.setdefault("switches", []).append(switch)
+    return {"status": "success", "count": len(project["switches"])}
 
 @app.post("/api/story/analyze")
 async def analyze_story(story_input: StoryInput, current_user: User = Depends(get_rate_limited_user)):
