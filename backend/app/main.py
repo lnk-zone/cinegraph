@@ -26,9 +26,12 @@ from game.models import (
     RPGVariable,
     RPGSwitch,
     RPGCharacter,
+    RPGLocation,
+    LocationConnection,
 )
 from game.character_enhancer import StoryCharacterEnhancer
 from game.variable_generator import StoryVariableGenerator
+from game.location_enhancer import StoryLocationEnhancer
 from core.redis_alerts import alert_manager
 from tasks.temporal_contradiction_detection import scan_story_contradictions
 from celery_config import REDIS_HOST, REDIS_PORT, REDIS_DB, ALERTS_CHANNEL
@@ -121,6 +124,8 @@ async def create_rpg_project(project: RPGProject):
         "variables": [],
         "switches": [],
         "characters": [],
+        "locations": [],
+        "location_connections": [],
     }
     return {"project_id": project_id, "project": project}
 
@@ -348,6 +353,104 @@ async def update_character_knowledge_state(project_id: str, character_id: str, k
 
     character.knowledge_state = knowledge
     return {"status": "success", "character": character}
+
+
+@app.get("/api/rpg-projects/{project_id}/locations")
+async def get_project_locations(project_id: str):
+    """Retrieve locations for a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"locations": project.get("locations", [])}
+
+
+@app.post("/api/rpg-projects/{project_id}/locations")
+async def add_project_location(project_id: str, location: RPGLocation):
+    """Add a location to a project."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project.setdefault("locations", []).append(location)
+    return {"status": "success", "count": len(project["locations"])}
+
+
+@app.post("/api/rpg-projects/{project_id}/locations/generate-from-story")
+async def generate_locations_from_story(project_id: str):
+    """Generate locations and connections from the story state."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if not project["stories"]:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+
+    enhancer = StoryLocationEnhancer(cinegraph_agent)
+    all_locs: List[RPGLocation] = []
+    all_conns: List[LocationConnection] = []
+    for story_id in project["stories"].keys():
+        locs, conns = await enhancer.enhance_locations(story_id)
+        all_locs.extend(locs)
+        all_conns.extend(conns)
+
+    project["locations"] = all_locs
+    project["location_connections"] = all_conns
+    return {"status": "success", "locations": all_locs, "connections": all_conns}
+
+
+@app.post("/api/rpg-projects/{project_id}/locations/{location_id}/enhance-from-story")
+async def enhance_location_from_story(project_id: str, location_id: str):
+    """Update a location's details using the story state."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    location = next((l for l in project.get("locations", []) if l.name == location_id), None)
+    if not location:
+        raise HTTPException(status_code=404, detail="Location not found")
+
+    if not project["stories"]:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+
+    story_id = next(iter(project["stories"].keys()))
+    enhancer = StoryLocationEnhancer(cinegraph_agent)
+    locs, conns = await enhancer.enhance_locations(story_id)
+    for updated in locs:
+        if updated.name == location_id:
+            location.type = updated.type
+            location.description = updated.description
+            location.events = updated.events
+            break
+
+    # Update connections related to this location
+    existing = [c for c in project.get("location_connections", []) if c.from_location != location_id and c.to_location != location_id]
+    for conn in conns:
+        if conn.from_location == location_id or conn.to_location == location_id:
+            existing.append(conn)
+    project["location_connections"] = existing
+
+    return {"status": "success", "location": location}
+
+
+@app.get("/api/rpg-projects/{project_id}/locations/{location_id}/connections")
+async def get_location_connections(project_id: str, location_id: str):
+    """Retrieve connections for a specific location."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    conns = [c for c in project.get("location_connections", []) if c.from_location == location_id or c.to_location == location_id]
+    return {"connections": conns}
+
+
+@app.post("/api/rpg-projects/{project_id}/locations/{location_id}/connections")
+async def add_location_connection(project_id: str, location_id: str, connection: LocationConnection):
+    """Add a connection for a location."""
+    project = rpg_projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project.setdefault("location_connections", []).append(connection)
+    return {"status": "success", "count": len(project["location_connections"])}
 
 @app.post("/api/story/analyze")
 async def analyze_story(story_input: StoryInput, current_user: User = Depends(get_rate_limited_user)):
