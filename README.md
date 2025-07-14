@@ -10,6 +10,8 @@ CineGraph is an AI-powered story analysis system that leverages graph databases 
 - **Character Consistency**: Deep character relationship mapping and consistency validation
 - **Plot Hole Detection**: Intelligent detection of logical inconsistencies and narrative gaps
 - **Knowledge Graph**: Dynamic knowledge graph construction from story content
+- **Quest Generation**: Create quests from story events using OpenAI models
+- **Dialogue Generation**: Produce interactive dialogue trees with OpenAI
 
 ### Enhanced AI Agent
 - **Dynamic Cypher Generation**: AI can write custom Cypher queries based on story schema
@@ -17,6 +19,8 @@ CineGraph is an AI-powered story analysis system that leverages graph databases 
 - **Advanced Validation**: Comprehensive query validation and safety checks
 - **Intelligent Caching**: Performance optimization through smart query caching
 - **Real-time Analysis**: Live contradiction detection and alert system
+- **Quest Generation (OpenAI-powered)**: Create quests from story events
+- **Dialogue Generation (OpenAI-powered)**: Build dynamic dialogues from interactions
 
 ### Technical Stack
 - **Backend**: FastAPI with async/await support

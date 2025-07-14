@@ -11,6 +11,8 @@ The `backend/game/models.py` module defines several pydantic models for storing 
 - **`RPGVariable`** and **`RPGSwitch`** – variable and boolean switch definitions with data type and scope fields.
 - **`RPGCharacter`** and **`CharacterStats`** – player and non‑player character data with simple statistics.
 - **`RPGLocation`** and **`LocationConnection`** – description of locations in the world and how they connect.
+- **`RPGQuest`**, **`QuestObjective`**, and **`CompletionCondition`** – quest structures generated from story events.
+- **`DialogueTree`**, **`DialogueNode`**, and **`DialogueChoice`** – models for interactive dialogue sequences.
 
 These models allow storing project state generated from stories or user input.
 
@@ -21,6 +23,9 @@ Several helper classes orchestrate AI powered generation of project data:
 - **`StoryVariableGenerator`** – pulls variable and switch information from the knowledge graph through a `CineGraphAgent`.
 - **`StoryCharacterEnhancer`** – builds `RPGCharacter` objects using character analysis results from the agent.
 - **`StoryLocationEnhancer`** – extracts locations and their connections from the analyzed story.
+- **`StoryQuestGenerator`** – creates `RPGQuest` structures from story events.
+- **`StoryDialogueGenerator`** – generates `DialogueTree` objects from story interactions.
+- **`CharacterRelationshipAnalyzer`** – helper used by generators to infer relationships.
 - **`RPGMakerAgent`** – specialized SDK agent to assist with exporting analysis results to RPG Maker formats.
 
 ## API Endpoints
@@ -42,5 +47,13 @@ Several helper classes orchestrate AI powered generation of project data:
 - `POST /api/rpg-projects/{project_id}/locations/generate-from-story` – generate locations and connections from the story.
 - `POST /api/rpg-projects/{project_id}/locations/{location_id}/enhance-from-story` – update a location with latest analysis.
 - `GET /api/rpg-projects/{project_id}/locations/{location_id}/connections` and `POST /api/rpg-projects/{project_id}/locations/{location_id}/connections` – manage location connections.
+- `GET /api/rpg-projects/{project_id}/quests` and `POST /api/rpg-projects/{project_id}/quests` – retrieve or add quests.
+- `POST /api/rpg-projects/{project_id}/quests/generate-from-story` – generate a quest from story events with OpenAI assistance.
+- `POST /api/rpg-projects/{project_id}/quests/{quest_id}/validate-story-consistency` – validate a quest against the project story.
+- `GET /api/rpg-projects/{project_id}/quests/{quest_id}/character-motivations` – analyze character motivations for a quest.
+- `GET /api/rpg-projects/{project_id}/dialogue-trees` and `POST /api/rpg-projects/{project_id}/dialogue-trees` – manage dialogue trees.
+- `POST /api/rpg-projects/{project_id}/dialogue-trees/generate-from-story` – create a dialogue tree from story interactions.
+- `POST /api/rpg-projects/{project_id}/dialogue-trees/{tree_id}/validate-consistency` – validate dialogue consistency.
+- `GET /api/rpg-projects/{project_id}/dialogue-trees/{tree_id}/personality-analysis` – request an OpenAI-driven personality analysis for a tree.
 
 These endpoints store project data in memory and leverage the agent services to populate models based on story analysis.
