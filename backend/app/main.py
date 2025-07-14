@@ -32,6 +32,9 @@ from game.models import (
 from game.character_enhancer import StoryCharacterEnhancer
 from game.variable_generator import StoryVariableGenerator
 from game.location_enhancer import StoryLocationEnhancer
+from game.quest_generator import StoryQuestGenerator
+from game.dialogue_generator import StoryDialogueGenerator
+from game.relationship_analyzer import CharacterRelationshipAnalyzer
 from core.redis_alerts import alert_manager
 from tasks.temporal_contradiction_detection import scan_story_contradictions
 from celery_config import REDIS_HOST, REDIS_PORT, REDIS_DB, ALERTS_CHANNEL
@@ -52,6 +55,20 @@ class ConversationResponse(BaseModel):
 
     session_id: str
     responses: List[str]
+
+
+class QuestGenerationRequest(BaseModel):
+    """Input payload for quest generation."""
+
+    event_id: str
+    story_id: Optional[str] = None
+
+
+class DialogueGenerationRequest(BaseModel):
+    """Input payload for dialogue generation."""
+
+    interaction_id: str
+    story_id: Optional[str] = None
 
 
 sdk_sessions: Dict[str, SDKAgentManager] = {}
@@ -358,6 +375,112 @@ async def add_location_connection(project_id: str, location_id: str, connection:
     await graphiti_manager.add_location_connection(project_id, connection)
     conns = await graphiti_manager.get_location_connections(project_id, location_id)
     return {"status": "success", "count": len(conns)}
+
+
+@app.get("/api/rpg-projects/{project_id}/quests")
+async def get_project_quests(project_id: str):
+    """Retrieve quests for a project."""
+    quests = await graphiti_manager.get_project_quests(project_id)
+    return {"quests": quests}
+
+
+@app.post("/api/rpg-projects/{project_id}/quests")
+async def add_project_quest(project_id: str, quest: RPGQuest):
+    """Add a quest to a project."""
+    await graphiti_manager.add_project_quest(project_id, quest)
+    quests = await graphiti_manager.get_project_quests(project_id)
+    return {"status": "success", "count": len(quests)}
+
+
+@app.post("/api/rpg-projects/{project_id}/quests/generate-from-story")
+async def generate_quest_from_story(project_id: str, req: QuestGenerationRequest):
+    """Generate a quest from analyzed story data."""
+    story_id = req.story_id
+    if not story_id:
+        ids = await graphiti_manager.get_project_story_ids(project_id)
+        if not ids:
+            raise HTTPException(status_code=400, detail="No stories found for project")
+        story_id = ids[0]
+
+    analyzer = CharacterRelationshipAnalyzer(cinegraph_agent)
+    generator = StoryQuestGenerator(cinegraph_agent, analyzer)
+    quest = await generator.generate_quest_from_story_event(story_id, req.event_id)
+    await graphiti_manager.add_project_quest(project_id, quest)
+    return {"status": "success", "quest": quest}
+
+
+@app.post("/api/rpg-projects/{project_id}/quests/{quest_id}/validate-story-consistency")
+async def validate_quest_story_consistency(project_id: str, quest_id: str):
+    """Validate quest consistency against the project story."""
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+    report = await cinegraph_agent.validate_story_consistency(story_ids[0], project_id)
+    return {"status": "success", "validation_report": report}
+
+
+@app.get("/api/rpg-projects/{project_id}/quests/{quest_id}/character-motivations")
+async def get_quest_character_motivations(project_id: str, quest_id: str):
+    """Analyze character motivations related to a quest."""
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+    question = f"What motivates the characters in quest {quest_id}?"
+    result = await cinegraph_agent.query_story(story_ids[0], question, project_id)
+    return {"motivations": result}
+
+
+@app.get("/api/rpg-projects/{project_id}/dialogue-trees")
+async def get_dialogue_trees(project_id: str):
+    """Retrieve dialogue trees for a project."""
+    trees = await graphiti_manager.get_dialogue_trees(project_id)
+    return {"dialogue_trees": trees}
+
+
+@app.post("/api/rpg-projects/{project_id}/dialogue-trees")
+async def add_dialogue_tree(project_id: str, tree: DialogueTree):
+    """Add a dialogue tree to a project."""
+    await graphiti_manager.add_dialogue_tree(project_id, tree)
+    trees = await graphiti_manager.get_dialogue_trees(project_id)
+    return {"status": "success", "count": len(trees)}
+
+
+@app.post("/api/rpg-projects/{project_id}/dialogue-trees/generate-from-story")
+async def generate_dialogue_from_story(project_id: str, req: DialogueGenerationRequest):
+    """Generate a dialogue tree from analyzed story data."""
+    story_id = req.story_id
+    if not story_id:
+        ids = await graphiti_manager.get_project_story_ids(project_id)
+        if not ids:
+            raise HTTPException(status_code=400, detail="No stories found for project")
+        story_id = ids[0]
+
+    analyzer = CharacterRelationshipAnalyzer(cinegraph_agent)
+    generator = StoryDialogueGenerator(cinegraph_agent, analyzer)
+    tree = await generator.generate_dialogue_from_story_interaction(story_id, req.interaction_id)
+    await graphiti_manager.add_dialogue_tree(project_id, tree)
+    return {"status": "success", "dialogue_tree": tree}
+
+
+@app.post("/api/rpg-projects/{project_id}/dialogue-trees/{tree_id}/validate-consistency")
+async def validate_dialogue_consistency(project_id: str, tree_id: str):
+    """Validate a dialogue tree against project story."""
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+    report = await cinegraph_agent.validate_story_consistency(story_ids[0], project_id)
+    return {"status": "success", "validation_report": report}
+
+
+@app.get("/api/rpg-projects/{project_id}/dialogue-trees/{tree_id}/personality-analysis")
+async def dialogue_personality_analysis(project_id: str, tree_id: str):
+    """Perform personality analysis for a dialogue tree."""
+    story_ids = await graphiti_manager.get_project_story_ids(project_id)
+    if not story_ids:
+        raise HTTPException(status_code=400, detail="No stories found for project")
+    question = f"Provide a personality analysis for dialogue tree {tree_id}."
+    result = await cinegraph_agent.query_story(story_ids[0], question, project_id)
+    return {"analysis": result}
 
 @app.post("/api/story/analyze")
 async def analyze_story(story_input: StoryInput, current_user: User = Depends(get_rate_limited_user)):
