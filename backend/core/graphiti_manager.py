@@ -1736,3 +1736,65 @@ class GraphitiManager:
             rec = results[0]
             return rec.get("s.content") if isinstance(rec, dict) else rec
         return ""
+
+    async def add_project_quest(self, project_id: str, quest: RPGQuest) -> None:
+        props = {**quest.dict(), "project_id": project_id}
+        prop_str = ", ".join(f"{k}: '{v}'" for k, v in props.items())
+        cypher = f"CREATE (:RPGQuest {{ {prop_str} }})"
+        await self._run_cypher_query(cypher)
+
+    async def get_project_quests(self, project_id: str) -> List[RPGQuest]:
+        cypher = f"MATCH (q:RPGQuest {{project_id: '{project_id}'}}) RETURN q"
+        results = await self._run_cypher_query(cypher)
+        quests: List[RPGQuest] = []
+        for record in results or []:
+            node = record.get("q", record)
+            data = getattr(node, "properties", getattr(node, "data", {}))
+            quests.append(RPGQuest(**data))
+        return quests
+
+    async def update_project_quest(self, project_id: str, quest: RPGQuest) -> None:
+        props = quest.dict()
+        set_str = ", ".join(f"q.{k} = '{v}'" for k, v in props.items())
+        cypher = (
+            f"MATCH (q:RPGQuest {{project_id: '{project_id}', name: '{quest.name}'}}) "
+            f"SET {set_str}"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def delete_project_quest(self, project_id: str, quest_name: str) -> None:
+        cypher = (
+            f"MATCH (q:RPGQuest {{project_id: '{project_id}', name: '{quest_name}'}}) DETACH DELETE q"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def add_dialogue_tree(self, project_id: str, dialogue: DialogueTree) -> None:
+        props = {**dialogue.dict(), "project_id": project_id}
+        prop_str = ", ".join(f"{k}: '{v}'" for k, v in props.items())
+        cypher = f"CREATE (:DialogueTree {{ {prop_str} }})"
+        await self._run_cypher_query(cypher)
+
+    async def get_dialogue_trees(self, project_id: str) -> List[DialogueTree]:
+        cypher = f"MATCH (d:DialogueTree {{project_id: '{project_id}'}}) RETURN d"
+        results = await self._run_cypher_query(cypher)
+        dialogues: List[DialogueTree] = []
+        for record in results or []:
+            node = record.get("d", record)
+            data = getattr(node, "properties", getattr(node, "data", {}))
+            dialogues.append(DialogueTree(**data))
+        return dialogues
+
+    async def update_dialogue_tree(self, project_id: str, dialogue: DialogueTree) -> None:
+        props = dialogue.dict()
+        set_str = ", ".join(f"d.{k} = '{v}'" for k, v in props.items())
+        cypher = (
+            f"MATCH (d:DialogueTree {{project_id: '{project_id}', id: '{dialogue.id}'}}) "
+            f"SET {set_str}"
+        )
+        await self._run_cypher_query(cypher)
+
+    async def delete_dialogue_tree(self, project_id: str, tree_id: str) -> None:
+        cypher = (
+            f"MATCH (d:DialogueTree {{project_id: '{project_id}', id: '{tree_id}'}}) DETACH DELETE d"
+        )
+        await self._run_cypher_query(cypher)
