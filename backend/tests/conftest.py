@@ -14,7 +14,7 @@ try:
     from graphiti.rules.validation_rules import ValidationRules
     from graphiti.rules.background_jobs import BackgroundConsistencyJob
     from graphiti.rules.consistency_engine import ConsistencyEngine
-except ModuleNotFoundError:
+except Exception:
     class Graphiti:
         async def build_indices_and_constraints(self):
             pass
@@ -95,6 +95,8 @@ def rpg_graphiti_store(monkeypatch):
             "characters": [],
             "locations": [],
             "location_connections": [],
+            "quests": [],
+            "dialogue_trees": [],
         }
         return pid
 
@@ -172,6 +174,18 @@ def rpg_graphiti_store(monkeypatch):
             if l.name == loc.name:
                 store[pid]["locations"][idx] = loc
 
+    async def add_project_quest(pid, quest):
+        store[pid]["quests"].append(quest)
+
+    async def get_project_quests(pid):
+        return store[pid]["quests"]
+
+    async def add_dialogue_tree(pid, tree):
+        store[pid]["dialogue_trees"].append(tree)
+
+    async def get_dialogue_trees(pid):
+        return store[pid]["dialogue_trees"]
+
     async def add_location_connection(pid, conn):
         store[pid]["location_connections"].append(conn)
 
@@ -203,6 +217,10 @@ def rpg_graphiti_store(monkeypatch):
     monkeypatch.setattr(graphiti_manager, "get_project_locations", get_project_locations)
     monkeypatch.setattr(graphiti_manager, "replace_project_locations", replace_project_locations)
     monkeypatch.setattr(graphiti_manager, "update_project_location", update_project_location)
+    monkeypatch.setattr(graphiti_manager, "add_project_quest", add_project_quest)
+    monkeypatch.setattr(graphiti_manager, "get_project_quests", get_project_quests)
+    monkeypatch.setattr(graphiti_manager, "add_dialogue_tree", add_dialogue_tree)
+    monkeypatch.setattr(graphiti_manager, "get_dialogue_trees", get_dialogue_trees)
     monkeypatch.setattr(graphiti_manager, "add_location_connection", add_location_connection)
     monkeypatch.setattr(graphiti_manager, "replace_location_connections", replace_location_connections)
     monkeypatch.setattr(graphiti_manager, "get_location_connections", get_location_connections)
